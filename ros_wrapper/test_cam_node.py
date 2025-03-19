@@ -20,7 +20,7 @@ class TestCamNode:
         self.rate = rospy.Rate(20)
 
     def run(self):
-        while True:
+        while not rospy.is_shutdown():
             ret, frame = self.cap.read()
             if not ret:
                 # break

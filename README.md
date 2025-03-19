@@ -1,3 +1,16 @@
+# SAM2-real-time ROS wrapper
+
+## Usage
+
+```bash
+python ros_wrapper/test_cam_node.py
+python ros_wrapper/sam2_node.py
+```
+
+## Result
+
+![SAM2 Real-time ROS](./assets/sam2-realtime-ros.mp4)
+
 # segment-anything-2 real-time
 Run Segment Anything Model 2 on a **live video stream**
 
