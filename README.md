@@ -9,7 +9,7 @@ python ros_wrapper/sam2_node.py
 
 ## Result
 
-![SAM2 Real-time ROS](./assets/sam2-realtime-ros.mp4)
+![SAM2 Real-time ROS](./assets/sam2-realtime-ros.gif)
 
 # segment-anything-2 real-time
 Run Segment Anything Model 2 on a **live video stream**
