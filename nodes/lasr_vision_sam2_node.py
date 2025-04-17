@@ -101,7 +101,6 @@
 import torch
 import numpy as np
 import cv2
-import time
 from cv_bridge import CvBridge
 from lasr_vision_sam2.msg import MaskWithID, MaskWithIDArray, BboxWithFlag, PointsWithLabelsAndFlag
 
@@ -133,7 +132,7 @@ class SAM2Node:
         rospy.loginfo("SAM2 predictor initialized from checkpoint.")
 
         # set up ROS
-        rospy.init_node("sam2_node")
+        rospy.init_node("lasr_vision_sam2_node")
         self.image_sub = rospy.Subscriber(
             "/camera/image_raw", Image, self.image_callback, queue_size=1
         )
@@ -285,3 +284,4 @@ class SAM2Node:
 
 if __name__ == "__main__":
     node = SAM2Node()
+    rospy.spin()
