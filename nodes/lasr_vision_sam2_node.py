@@ -130,6 +130,8 @@ class SAM2Node:
         self.predictor = build_sam2_camera_predictor(model_cfg, sam2_checkpoint)
         self.predictor.reset_state()
 
+        rospy.loginfo("SAM2 predictor initialized from checkpoint.")
+
         # set up ROS
         rospy.init_node("sam2_node")
         self.image_sub = rospy.Subscriber(
@@ -146,103 +148,140 @@ class SAM2Node:
             "/camera/debug_mask_overlay", Image, queue_size=1
         )
 
+        rospy.loginfo("SAM2Node ROS interfaces set up.")
+
         self.frame = None
         self.has_init = False
 
     def bbox_prompt_callback(self, msg):
         if len(msg.bbox_points) != 2:
+            rospy.logwarn("Received BBox with invalid number of points.")
             return
-        
-        if self.frame:
-            # if to reset, reset before any prompt is added
-            reset_flag = msg.reset
-            if reset_flag:
-                self.predictor.reset_state()
-                self.has_init = False
 
-            if not self.has_init:
-                self.predictor.load_first_frame(self.frame)
-                self.has_init = True
+        if self.frame is None:
+            rospy.logwarn("Received BBox but no frame is available yet.")
+            return
 
-            obj_id = msg.obj_id
-            x1, y1 = msg.bbox_points[0].x, msg.bbox_points[0].y
-            x2, y2 = msg.bbox_points[1].x, msg.bbox_points[1].y
-            bbox = [[x1, y1], [x2, y2]]
-            self.predictor.add_new_prompt(
-                frame_idx=self.predictor.condition_state["num_frames"] - 1,  # last frame added
-                obj_id=obj_id,
-                bbox=bbox,
-                points=None,
-                labels=None,
-                clear_old_points=msg.clear_old_points,
-                normalize_coords=True,
-            )
+        reset_flag = msg.reset
+        if reset_flag:
+            rospy.loginfo(f"Resetting state for object ID {msg.obj_id}.")
+            self.predictor.reset_state()
+            self.has_init = False
+
+        if not self.has_init:
+            self.predictor.load_first_frame(self.frame)
+            self.has_init = True
+            rospy.loginfo("Loaded first frame for BBox prompt.")
+
+        x1, y1 = msg.bbox_points[0].x, msg.bbox_points[0].y
+        x2, y2 = msg.bbox_points[1].x, msg.bbox_points[1].y
+        bbox = [[x1, y1], [x2, y2]]
+        obj_id = msg.obj_id
+
+        rospy.loginfo(f"Adding BBox for object ID {obj_id}: [{x1:.1f}, {y1:.1f}], [{x2:.1f}, {y2:.1f}]")
+
+        self.predictor.add_new_prompt(
+            frame_idx=self.predictor.condition_state["num_frames"] - 1,
+            obj_id=obj_id,
+            bbox=bbox,
+            points=None,
+            labels=None,
+            clear_old_points=msg.clear_old_points,
+            normalize_coords=True,
+        )
 
     def points_prompt_callback(self, msg):
-        if len(msg.bbox_points) != len(msg.labels):
+        if len(msg.points) != len(msg.labels):
+            rospy.logwarn("Received points and labels with mismatched lengths.")
             return
-        
-        if self.frame:
-            # if to reset, reset before any prompt is added
-            reset_flag = msg.reset
-            if reset_flag:
-                self.predictor.reset_state()
-                self.has_init = False
 
-            if not self.has_init:
-                self.predictor.load_first_frame(self.frame)
-                self.has_init = True
+        if self.frame is None:
+            rospy.logwarn("Received points prompt but no frame is available.")
+            return
 
-            obj_id = msg.obj_id
-            points = [[p.x, p.y] for p in msg.points]
-            labels = [l.data for l in msg.labels]
-            self.predictor.add_new_points(
-                frame_idx=self.predictor.condition_state["num_frames"] - 1,  # last frame added
-                obj_id=obj_id,
-                bbox=None,
-                points=points,
-                labels=labels,
-                clear_old_points=msg.clear_old_points,
-                normalize_coords=True,
-            )
+        reset_flag = msg.reset
+        if reset_flag:
+            rospy.loginfo(f"Resetting state for object ID {msg.obj_id}.")
+            self.predictor.reset_state()
+            self.has_init = False
+
+        if not self.has_init:
+            self.predictor.load_first_frame(self.frame)
+            self.has_init = True
+            rospy.loginfo("Loaded first frame for point prompt.")
+
+        obj_id = msg.obj_id
+        points = [[p.x, p.y] for p in msg.points]
+        labels = [l.data for l in msg.labels]
+
+        rospy.loginfo(f"Adding {len(points)} points for object ID {obj_id}.")
+
+        self.predictor.add_new_points(
+            frame_idx=self.predictor.condition_state["num_frames"] - 1,
+            obj_id=obj_id,
+            bbox=None,
+            points=points,
+            labels=labels,
+            clear_old_points=msg.clear_old_points,
+            normalize_coords=True,
+        )
 
     def image_callback(self, msg):
-        # this has to be outside of has init since we need frame as condition of start as well
-        self.frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-        if self.has_init:  # only do prediction if the predictor is inited
+        try:
+            self.frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8").copy()
+        except Exception as e:
+            rospy.logerr(f"Failed to decode image: {e}")
+            return
+
+        if not self.has_init:
+            return  # Waiting for bbox or points to start
+
+        try:
             self.predictor.add_conditioning_frame(self.frame)
             out_obj_ids, out_mask_logits = self.predictor.track(self.frame)
+            rospy.loginfo(f"Tracking {len(out_obj_ids)} objects in current frame.")
+        except Exception as e:
+            rospy.logerr(f"Error during tracking: {e}")
+            return
 
-            # make mask array message to publish
-            mask_array_msg = MaskWithIDArray()
-            
-            # draw the overlay masks and ids
-            mask_overlay = self.frame.copy()
-            masks_np = out_mask_logits.cpu().numpy()
-            for i, mask in enumerate(masks_np):
-                # get mask with id messages and add to array
+        # Create mask message array
+        mask_array_msg = MaskWithIDArray()
+        mask_overlay = self.frame.copy()
+        masks_np = out_mask_logits.cpu().numpy()
+
+        for i, mask in enumerate(masks_np):
+            obj_id = out_obj_ids[i]
+
+            # Pack mask as mono8 image
+            try:
                 mask_msg = MaskWithID()
-                mask_msg.id = out_obj_ids[i]
+                mask_msg.id = obj_id
                 mask_msg.mask = self.bridge.cv2_to_imgmsg(mask, encoding="mono8")
-                mask_array_msg.masks.append(mask_msg)  # not sure if better to use binary
+                mask_array_msg.masks.append(mask_msg)
+            except Exception as e:
+                rospy.logerr(f"Failed to encode mask for object ID {obj_id}: {e}")
+                continue
 
-                # make coloured mask relay
-                binary_mask = (mask[0] > 0).astype(np.uint8)
-                colored = np.zeros_like(mask_overlay)
-                colored[:, :, 2] = binary_mask * 255
-                mask_overlay = cv2.addWeighted(mask_overlay, 1.0, colored, 0.5, 0)
-                ys, xs = np.where(binary_mask)
-                if len(xs) > 0 and len(ys) > 0:
-                    cx, cy = int(xs.mean()), int(ys.mean())
-                    cv2.putText(mask_overlay, f"ID {out_obj_ids[i]}", (cx, cy),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-            mask_overlay = self.bridge.cv2_to_imgmsg(mask_overlay, desired_encoding="bgr8")
-            
-            # publish both messages
+            # Draw visualization overlay
+            binary_mask = (mask[0] > 0).astype(np.uint8)
+            colored = np.zeros_like(mask_overlay)
+            colored[:, :, 2] = binary_mask * 255
+            mask_overlay = cv2.addWeighted(mask_overlay, 1.0, colored, 0.5, 0)
+            ys, xs = np.where(binary_mask)
+            if len(xs) > 0 and len(ys) > 0:
+                cx, cy = int(xs.mean()), int(ys.mean())
+                cv2.putText(mask_overlay, f"ID {obj_id}", (cx, cy),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+        # Publish
+        try:
+            overlay_msg = self.bridge.cv2_to_imgmsg(mask_overlay, encoding="bgr8")
             self.mask_pub.publish(mask_array_msg)
-            self.mask_overlay_pub.publish(mask_overlay)
-        else:
-            rospy.sleep(0.01)
+            self.mask_overlay_pub.publish(overlay_msg)
+            rospy.loginfo("Published mask and overlay.")
+        except Exception as e:
+            rospy.logerr(f"Failed to publish output: {e}")
+
 
 if __name__ == "__main__":
     node = SAM2Node()
