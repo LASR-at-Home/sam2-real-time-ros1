@@ -1,36 +1,101 @@
 # -----------------------------------------------------------------------------
-# How to encode a 2D bounding box into a visualization_msgs/Marker message:
+# IMPORTANT!!!!!! ALL THE COORDINATES MUST BE NORMALISED!!!!!!
+# -----------------------------------------------------------------------------
+# How to construct a BBoxPointsWithFlag message:
 #
-# Given a bounding box in the format:
-#   bbox = [[x1, y1], [x2, y2]]
-# where:
-#   (x1, y1) = top-left corner
-#   (x2, y2) = bottom-right corner
+# This message represents a 2D bounding box with object ID and a reset flag.
+# It uses two points to define the box:
+#   - The top-left corner (x1, y1)
+#   - The bottom-right corner (x2, y2)
 #
-# Step 1: Compute center and size
-#   cx = (x1 + x2) / 2.0
-#   cy = (y1 + y2) / 2.0
-#   w  = x2 - x1
-#   h  = y2 - y1
+# FIELD MEANING:
+#   x1, y1: coordinates of the top-left corner of the bounding box
+#   x2, y2: coordinates of the bottom-right corner of the bounding box
+#   obj_id: integer ID assigned to the object (used for tracking or association)
+#   reset: if True, indicates that previous information for this object should be cleared
 #
-# Step 2: Create a Marker message
-#   marker = visualization_msgs.msg.Marker()
-#   marker.type = Marker.CUBE
-#   marker.pose.position.x = cx
-#   marker.pose.position.y = cy
-#   marker.pose.position.z = 0.0  # Set z = 0 for 2D
-#   marker.scale.x = w
-#   marker.scale.y = h
-#   marker.scale.z = 0.01  # Small thickness for 2D display
+# -----------------------------------------------------------------------------
+# Step-by-step construction:
 #
-# Optional:
-#   marker.id = object_id       # Assign a unique ID per object
-#   marker.ns = "bbox"          # Namespace to group markers
-#   marker.color.r/g/b/a        # Set RGBA color
-#   marker.header.frame_id      # Coordinate frame (e.g. "map", "camera")
-#   marker.header.stamp         # Timestamp
+# 1. Import types:
+#     from my_perception.msg import BBoxPointsWithFlag
+#     from geometry_msgs.msg import Point
 #
-# Step 3: Publish via rospy.Publisher("/bbox", Marker, queue_size=1)
+# 2. Create the message:
+#     msg = BBoxPointsWithFlag()
+#
+# 3. Assign object ID and reset flag:
+#     msg.obj_id = 42         # ID for this bounding box
+#     msg.reset = False       # Set to True if this should reset existing data
+#
+# 4. Create the bounding box corner points:
+#     p1 = Point()            # Top-left corner
+#     p1.x = x1               # Minimum x-coordinate
+#     p1.y = y1               # Minimum y-coordinate
+#     p1.z = 0.0              # 2D, so z is 0
+#
+#     p2 = Point()            # Bottom-right corner
+#     p2.x = x2               # Maximum x-coordinate
+#     p2.y = y2               # Maximum y-coordinate
+#     p2.z = 0.0
+#
+# 5. Assign to message:
+#     msg.bbox_points = [p1, p2]
+#
+# 6. Publish:
+#     bbox_pub.publish(msg)
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# How to construct a PointsWithLabels message:
+#
+# This message contains:
+#   - a list of 2D points with explicit x/y coordinates
+#   - a label for each point
+#   - an object identifier (obj_id)
+#   - a reset flag indicating whether to clear previous point data
+#
+# FIELD MEANING:
+#   point.x: horizontal coordinate (x-axis), increases to the right
+#            x = 0 refers to the left edge of the image
+#
+#   point.y: vertical coordinate (y-axis), increases downward
+#            y = 0 refers to the top edge of the image
+#
+#   point.z: always set to 0.0 (unused, for 2D purposes only)
+#
+#   label.data: integer label assigned to the point (e.g., 0, 1)
+#   obj_id: integer identifier grouping points under the same object
+#   reset: boolean flag; True clears all previous points for this object
+#
+# -----------------------------------------------------------------------------
+# Step-by-step construction:
+#
+# 1. Import message types:
+#     from my_perception.msg import PointsWithLabels
+#     from geometry_msgs.msg import Point
+#     from std_msgs.msg import Int32
+#
+# 2. Create the message:
+#     msg = PointsWithLabels()
+#     msg.obj_id = 1
+#     msg.reset = False
+#
+# 3. Define points:
+#     p1 = Point()
+#     p1.x = x
+#     p1.y = y
+#     p1.z = 0.0
+#
+#     l1 = Int32()
+#     l1.data = 1     # example label
+#
+# 4. Assign to message:
+#     msg.points = [p1]
+#     msg.labels = [l1]
+#
+# 5. Publish:
+#     pub.publish(msg)
 # -----------------------------------------------------------------------------
 
 import torch
@@ -38,8 +103,7 @@ import numpy as np
 import cv2
 import time
 from cv_bridge import CvBridge
-from visualization_msgs.msg import Marker
-from lasr_vision_sam2.msg import MaskWithID, MaskWithIDArray
+from lasr_vision_sam2.msg import MaskWithID, MaskWithIDArray, BboxWithFlag, PointsWithLabelsAndFlag
 
 
 # use bfloat16 for the entire notebook
@@ -62,8 +126,9 @@ class SAM2Node:
         sam2_checkpoint = "./checkpoints/sam2.1_hiera_small.pt"
         model_cfg = "configs/sam2.1/sam2.1_hiera_s.yaml"
 
-        self.cv_bridge = CvBridge()
+        self.bridge = CvBridge()
         self.predictor = build_sam2_camera_predictor(model_cfg, sam2_checkpoint)
+        self.predictor.reset_state()
 
         # set up ROS
         rospy.init_node("sam2_node")
@@ -71,7 +136,10 @@ class SAM2Node:
             "/camera/image_raw", Image, self.image_callback, queue_size=1
         )
         self.bbox_sub = rospy.Subscriber(
-            "/sum2/bbox", Marker, self.prompt_callback,
+            "/sum2/bboxes", BboxWithFlag, self.bbox_prompt_callback,
+        )
+        self.point_sub = rospy.Subscriber(
+            "/sum2/points", PointsWithLabelsAndFlag, self.points_prompt_callback,
         )
         self.mask_pub = rospy.Publisher("/sum2/masks", MaskWithIDArray, queue_size=1)
         self.mask_overlay_pub = rospy.Publisher(
@@ -81,48 +149,65 @@ class SAM2Node:
         self.frame = None
         self.has_init = False
 
-        self.visualize()
-
-    def visualize(self):
-        while not rospy.is_shutdown():
-            if self.frame is None:
-                rospy.sleep(0.1)
-                continue
+    def bbox_prompt_callback(self, msg):
+        if len(msg.bbox_points) != 2:
+            return
+        
+        if self.frame:
+            # if to reset, reset before any prompt is added
+            reset_flag = msg.reset
+            if reset_flag:
+                self.predictor.reset_state()
+                self.has_init = False
 
             if not self.has_init:
                 self.predictor.load_first_frame(self.frame)
-                obj_points = self.get_point_prompts(self.frame)
-
-                for obj_id, (points, labels) in obj_points.items():
-                    points = np.array(points, dtype=np.float32)
-                    labels = np.array(labels, dtype=np.int32)
-                    _, out_obj_ids, out_mask_logits = self.predictor.add_new_prompt(
-                        frame_idx=0, obj_id=obj_id, points=points, labels=labels
-                    )
-
                 self.has_init = True
 
-            rospy.sleep(0.01)
-
-    def prompt_callback(self, msg):
-        if msg.type != Marker.CUBE:
-            return
-        if self.frame:
-            self.predictor.load_first_frame(self.frame)
-            cx = msg.pose.position.x
-            cy = msg.pose.position.y
-            w = msg.scale.x
-            h = msg.scale.y
-
-            x1 = int(cx - w / 2)
-            y1 = int(cy - h / 2)
-            x2 = int(cx + w / 2)
-            y2 = int(cy + h / 2)
-
+            obj_id = msg.obj_id
+            x1, y1 = msg.bbox_points[0].x, msg.bbox_points[0].y
+            x2, y2 = msg.bbox_points[1].x, msg.bbox_points[1].y
             bbox = [[x1, y1], [x2, y2]]
-            object_id = msg.id
+            self.predictor.add_new_prompt(
+                frame_idx=self.predictor.condition_state["num_frames"] - 1,  # last frame added
+                obj_id=obj_id,
+                bbox=bbox,
+                points=None,
+                labels=None,
+                clear_old_points=msg.clear_old_points,
+                normalize_coords=True,
+            )
+
+    def points_prompt_callback(self, msg):
+        if len(msg.bbox_points) != len(msg.labels):
+            return
+        
+        if self.frame:
+            # if to reset, reset before any prompt is added
+            reset_flag = msg.reset
+            if reset_flag:
+                self.predictor.reset_state()
+                self.has_init = False
+
+            if not self.has_init:
+                self.predictor.load_first_frame(self.frame)
+                self.has_init = True
+
+            obj_id = msg.obj_id
+            points = [[p.x, p.y] for p in msg.points]
+            labels = [l.data for l in msg.labels]
+            self.predictor.add_new_points(
+                frame_idx=self.predictor.condition_state["num_frames"] - 1,  # last frame added
+                obj_id=obj_id,
+                bbox=None,
+                points=points,
+                labels=labels,
+                clear_old_points=msg.clear_old_points,
+                normalize_coords=True,
+            )
 
     def image_callback(self, msg):
+        # this has to be outside of has init since we need frame as condition of start as well
         self.frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         if self.has_init:  # only do prediction if the predictor is inited
             self.predictor.add_conditioning_frame(self.frame)
@@ -138,7 +223,7 @@ class SAM2Node:
                 # get mask with id messages and add to array
                 mask_msg = MaskWithID()
                 mask_msg.id = out_obj_ids[i]
-                mask_msg.mask = self.cv_bridge.cv2_to_imgmsg(mask, encoding="mono8")
+                mask_msg.mask = self.bridge.cv2_to_imgmsg(mask, encoding="mono8")
                 mask_array_msg.masks.append(mask_msg)  # not sure if better to use binary
 
                 # make coloured mask relay
@@ -151,6 +236,7 @@ class SAM2Node:
                     cx, cy = int(xs.mean()), int(ys.mean())
                     cv2.putText(mask_overlay, f"ID {out_obj_ids[i]}", (cx, cy),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            mask_overlay = self.bridge.cv2_to_imgmsg(mask_overlay, desired_encoding="bgr8")
             
             # publish both messages
             self.mask_pub.publish(mask_array_msg)
