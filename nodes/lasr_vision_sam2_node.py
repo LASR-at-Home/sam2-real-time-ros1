@@ -116,7 +116,7 @@ if torch.cuda.get_device_properties(0).major >= 8:
 from sam2.build_sam import build_sam2_camera_predictor
 
 import rospy
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, Bool
 
 
 class SAM2Node:
@@ -133,6 +133,11 @@ class SAM2Node:
 
         # set up ROS
         rospy.init_node("lasr_vision_sam2_node")
+        self.condition_frame_flag_sub = rospy.Subscriber(
+            "/add_conditioning_frame_flag",
+            Bool,
+            self.add_conditioning_frame_flag_callback
+        )
         self.image_sub = rospy.Subscriber(
             "/camera/image_raw", Image, self.image_callback, queue_size=1
         )
@@ -149,8 +154,13 @@ class SAM2Node:
 
         rospy.loginfo("SAM2Node ROS interfaces set up.")
 
+        self.add_conditioning_frame_flag = True
         self.frame = None
         self.has_init = False
+
+    def add_conditioning_frame_flag_callback(self, msg):
+        self.add_conditioning_frame_flag == msg.data
+        rospy.loginfo(f"Adding conditional frame flag set to {self.add_conditioning_frame_flag}")
 
     def bbox_prompt_callback(self, msg):
         if len(msg.bbox_points) != 2:
@@ -236,9 +246,10 @@ class SAM2Node:
             return  # Waiting for bbox or points to start
 
         try:
-            self.predictor.add_conditioning_frame(self.frame)
+            if self.add_conditioning_frame_flag:
+                self.predictor.add_conditioning_frame(self.frame)
             out_obj_ids, out_mask_logits = self.predictor.track(self.frame)
-            rospy.loginfo(f"Tracking {len(out_obj_ids)} objects in current frame.")
+            # rospy.loginfo(f"Tracking {len(out_obj_ids)} objects in current frame.")
         except Exception as e:
             rospy.logerr(f"Error during tracking: {e}")
             return
