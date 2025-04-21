@@ -136,8 +136,13 @@ class SAM2Node:
 
         # set up ROS
         rospy.init_node("lasr_vision_sam2_node")
+        self.track_flag_sub = rospy.Subscriber(
+            "/sum2/track_flag",
+            Bool,
+            self.track_flag_callback
+        )
         self.condition_frame_flag_sub = rospy.Subscriber(
-            "/add_conditioning_frame_flag",
+            "/sum2/add_conditioning_frame_flag",
             Bool,
             self.add_conditioning_frame_flag_callback
         )
@@ -150,7 +155,7 @@ class SAM2Node:
         self.point_sub = rospy.Subscriber(
             "/sum2/points", PointsWithLabelsAndFlag, self.points_prompt_callback,
         )
-        self.mask_pub = rospy.Publisher("/sum2/masks", MaskWithIDArray, queue_size=1)
+        self.mask_pub = rospy.Publisher("/camera/masks", MaskWithIDArray, queue_size=1)
         self.mask_overlay_pub = rospy.Publisher(
             "/camera/debug_mask_overlay", Image, queue_size=1
         )
@@ -160,7 +165,13 @@ class SAM2Node:
 
         self.add_conditioning_frame_flag = True
         self.frame = None
-        self.has_init = False
+        self.has_first_frame = False
+        self.track_flag = False
+
+    def track_flag_callback(self, msg):
+        self.track_flag = msg.data
+        rospy.loginfo(f"Track flag set to {self.track_flag}")
+        print(f"Track flag set to {self.track_flag}")
 
     def add_conditioning_frame_flag_callback(self, msg):
         self.add_conditioning_frame_flag = msg.data
@@ -179,13 +190,16 @@ class SAM2Node:
         reset_flag = msg.reset
         if reset_flag:
             rospy.loginfo(f"Resetting state for object ID {msg.obj_id}.")
+            rospy.logwarn(f"Resetting state for object ID {msg.obj_id}.")
+            rospy.logerr(f"Resetting state for object ID {msg.obj_id}.")
             if "point_inputs_per_obj" in self.predictor.condition_state:
                 self.predictor.reset_state()
-            self.has_init = False
+            self.has_first_frame = False
+            self.track_flag = False
 
-        if not self.has_init:
+        if not self.has_first_frame:
             self.predictor.load_first_frame(self.frame)
-            self.has_init = True
+            self.has_first_frame = True
             rospy.loginfo("Loaded first frame for BBox prompt.")
 
         x1, y1 = msg.bbox_points[0].x, msg.bbox_points[0].y
@@ -193,10 +207,10 @@ class SAM2Node:
         bbox = [[x1, y1], [x2, y2]]
         obj_id = msg.obj_id
 
-        rospy.loginfo(f"Adding BBox for object ID {obj_id}: [{x1:.1f}, {y1:.1f}], [{x2:.1f}, {y2:.1f}]")
-
         frame_idx = self.predictor.condition_state.get("num_frames", 1) - 1
         frame_idx = max(0, frame_idx)
+        rospy.loginfo(f"Adding BBox for object ID {obj_id}: [{x1:.1f}, {y1:.1f}], [{x2:.1f}, {y2:.1f}] to frame {frame_idx}.")
+
         self.predictor.add_new_prompt(
             frame_idx=frame_idx,
             obj_id=obj_id,
@@ -221,21 +235,22 @@ class SAM2Node:
             rospy.loginfo(f"Resetting state for object ID {msg.obj_id}.")
             if "point_inputs_per_obj" in self.predictor.condition_state:
                 self.predictor.reset_state()
-            self.has_init = False
+            self.has_first_frame = False
+            self.track_flag = False
 
-        if not self.has_init:
+        if not self.has_first_frame:
             self.predictor.load_first_frame(self.frame)
-            self.has_init = True
+            self.has_first_frame = True
             rospy.loginfo("Loaded first frame for point prompt.")
 
         obj_id = msg.obj_id
         points = [[p.x, p.y] for p in msg.points]
         labels = [l.data for l in msg.labels]
 
-        rospy.loginfo(f"Adding {len(points)} points for object ID {obj_id}.")
-
         frame_idx = self.predictor.condition_state.get("num_frames", 1) - 1
         frame_idx = max(0, frame_idx)
+        rospy.loginfo(f"Adding {len(points)} points for object ID {obj_id} to frame {frame_idx}.")
+
         self.predictor.add_new_points(
             frame_idx=frame_idx,
             obj_id=obj_id,
@@ -253,17 +268,22 @@ class SAM2Node:
             rospy.logerr(f"Failed to decode image: {e}")
             return
 
-        if not self.has_init:
+        if not self.has_first_frame:
+            self.track_flag = False
             return  # Waiting for bbox or points to start
-
-        try:
-            if self.add_conditioning_frame_flag:
-                self.predictor.add_conditioning_frame(self.frame)
-            out_obj_ids, out_mask_logits = self.predictor.track(self.frame)
-            # rospy.loginfo(f"Tracking {len(out_obj_ids)} objects in current frame.")
-        except Exception as e:
-            rospy.logerr(f"Error during tracking: {e}")
+        
+        if not self.track_flag:
             return
+
+        # try:
+        if self.add_conditioning_frame_flag:
+            self.predictor.add_conditioning_frame(self.frame)
+            rospy.loginfo("Conditioning frame added.")
+        out_obj_ids, out_mask_logits = self.predictor.track(self.frame)
+        # rospy.loginfo(f"Tracking {len(out_obj_ids)} objects in current frame.")
+        # except Exception as e:
+        #     rospy.logerr(f"Error during tracking: {e}")
+        #     return
 
         # Create mask message array
         mask_array_msg = MaskWithIDArray()
@@ -273,18 +293,26 @@ class SAM2Node:
         for i, mask in enumerate(masks_np):
             obj_id = out_obj_ids[i]
 
-            # Pack mask as mono8 image
             try:
+                # Print debug shape/type info
+                rospy.loginfo(f"[Tracking] Processing object ID {obj_id}")
+                rospy.loginfo(f" - mask raw shape: {mask.shape}, dtype: {mask.dtype}, min: {mask.min():.4f}, max: {mask.max():.4f}")
+
+                # Ensure mono8 format
+                mask_np = mask[0]  # Assume (1, H, W)
+                mask_uint8 = (mask_np * 255).clip(0, 255).astype(np.uint8)
+
                 mask_msg = MaskWithID()
                 mask_msg.id = obj_id
-                mask_msg.mask = self.bridge.cv2_to_imgmsg(mask, encoding="mono8")
+                mask_msg.mask = self.bridge.cv2_to_imgmsg(mask_uint8, encoding="mono8")
                 mask_array_msg.masks.append(mask_msg)
+                rospy.loginfo(f" - Successfully encoded mask for object ID {obj_id}")
             except Exception as e:
-                rospy.logerr(f"Failed to encode mask for object ID {obj_id}: {e}")
+                rospy.logerr(f"[Tracking] Failed to encode mask for object ID {obj_id}: {e}")
                 continue
 
             # Draw visualization overlay
-            binary_mask = (mask[0] > 0).astype(np.uint8)
+            binary_mask = (mask_np > 0).astype(np.uint8)
             colored = np.zeros_like(mask_overlay)
             colored[:, :, 2] = binary_mask * 255
             mask_overlay = cv2.addWeighted(mask_overlay, 1.0, colored, 0.5, 0)
@@ -293,6 +321,7 @@ class SAM2Node:
                 cx, cy = int(xs.mean()), int(ys.mean())
                 cv2.putText(mask_overlay, f"ID {obj_id}", (cx, cy),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                rospy.loginfo(f" - Middle point {(cx, cy)}")
 
         # Publish
         try:
