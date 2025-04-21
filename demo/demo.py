@@ -69,7 +69,7 @@ while not rospy.is_shutdown():
                 bbox_msg.clear_old_points = True
                 bbox_msg.bbox_points = [
                     Point(x=x1, y=y1, z=0.0),
-                    Point(x=x2, y=y2, z=0.0)
+                    Point(x=x2, y=y2, z=0.0),
                 ]
 
                 bbox_pub.publish(bbox_msg)

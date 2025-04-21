@@ -102,7 +102,12 @@ import torch
 import numpy as np
 import cv2
 from cv_bridge import CvBridge
-from lasr_vision_sam2.msg import MaskWithID, MaskWithIDArray, BboxWithFlag, PointsWithLabelsAndFlag
+from lasr_vision_sam2.msg import (
+    MaskWithID,
+    MaskWithIDArray,
+    BboxWithFlag,
+    PointsWithLabelsAndFlag,
+)
 
 # use bfloat16 for the entire notebook
 torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()
@@ -137,23 +142,25 @@ class SAM2Node:
         # set up ROS
         rospy.init_node("lasr_vision_sam2_node")
         self.track_flag_sub = rospy.Subscriber(
-            "/sum2/track_flag",
-            Bool,
-            self.track_flag_callback
+            "/sum2/track_flag", Bool, self.track_flag_callback
         )
         self.condition_frame_flag_sub = rospy.Subscriber(
             "/sum2/add_conditioning_frame_flag",
             Bool,
-            self.add_conditioning_frame_flag_callback
+            self.add_conditioning_frame_flag_callback,
         )
         self.image_sub = rospy.Subscriber(
             "/camera/image_raw", Image, self.image_callback, queue_size=1
         )
         self.bbox_sub = rospy.Subscriber(
-            "/sum2/bboxes", BboxWithFlag, self.bbox_prompt_callback,
+            "/sum2/bboxes",
+            BboxWithFlag,
+            self.bbox_prompt_callback,
         )
         self.point_sub = rospy.Subscriber(
-            "/sum2/points", PointsWithLabelsAndFlag, self.points_prompt_callback,
+            "/sum2/points",
+            PointsWithLabelsAndFlag,
+            self.points_prompt_callback,
         )
         self.mask_pub = rospy.Publisher("/camera/masks", MaskWithIDArray, queue_size=1)
         self.mask_overlay_pub = rospy.Publisher(
@@ -175,8 +182,12 @@ class SAM2Node:
 
     def add_conditioning_frame_flag_callback(self, msg):
         self.add_conditioning_frame_flag = msg.data
-        rospy.loginfo(f"Adding conditional frame flag set to {self.add_conditioning_frame_flag}")
-        print(f"Adding conditional frame flag set to {self.add_conditioning_frame_flag}")
+        rospy.loginfo(
+            f"Adding conditional frame flag set to {self.add_conditioning_frame_flag}"
+        )
+        print(
+            f"Adding conditional frame flag set to {self.add_conditioning_frame_flag}"
+        )
 
     def bbox_prompt_callback(self, msg):
         if len(msg.bbox_points) != 2:
@@ -209,7 +220,9 @@ class SAM2Node:
 
         frame_idx = self.predictor.condition_state.get("num_frames", 1) - 1
         frame_idx = max(0, frame_idx)
-        rospy.loginfo(f"Adding BBox for object ID {obj_id}: [{x1:.1f}, {y1:.1f}], [{x2:.1f}, {y2:.1f}] to frame {frame_idx}.")
+        rospy.loginfo(
+            f"Adding BBox for object ID {obj_id}: [{x1:.1f}, {y1:.1f}], [{x2:.1f}, {y2:.1f}] to frame {frame_idx}."
+        )
 
         self.predictor.add_new_prompt(
             frame_idx=frame_idx,
@@ -249,7 +262,9 @@ class SAM2Node:
 
         frame_idx = self.predictor.condition_state.get("num_frames", 1) - 1
         frame_idx = max(0, frame_idx)
-        rospy.loginfo(f"Adding {len(points)} points for object ID {obj_id} to frame {frame_idx}.")
+        rospy.loginfo(
+            f"Adding {len(points)} points for object ID {obj_id} to frame {frame_idx}."
+        )
 
         self.predictor.add_new_points(
             frame_idx=frame_idx,
@@ -271,19 +286,19 @@ class SAM2Node:
         if not self.has_first_frame:
             self.track_flag = False
             return  # Waiting for bbox or points to start
-        
+
         if not self.track_flag:
             return
 
-        # try:
-        if self.add_conditioning_frame_flag:
-            self.predictor.add_conditioning_frame(self.frame)
-            rospy.loginfo("Conditioning frame added.")
-        out_obj_ids, out_mask_logits = self.predictor.track(self.frame)
-        # rospy.loginfo(f"Tracking {len(out_obj_ids)} objects in current frame.")
-        # except Exception as e:
-        #     rospy.logerr(f"Error during tracking: {e}")
-        #     return
+        try:
+            if self.add_conditioning_frame_flag:
+                self.predictor.add_conditioning_frame(self.frame)
+                rospy.loginfo("Conditioning frame added.")
+            out_obj_ids, out_mask_logits = self.predictor.track(self.frame)
+            rospy.loginfo(f"Tracking {len(out_obj_ids)} objects in current frame.")
+        except Exception as e:
+            rospy.logerr(f"Error during tracking: {e}")
+            return
 
         # Create mask message array
         mask_array_msg = MaskWithIDArray()
@@ -296,7 +311,9 @@ class SAM2Node:
             try:
                 # Print debug shape/type info
                 rospy.loginfo(f"[Tracking] Processing object ID {obj_id}")
-                rospy.loginfo(f" - mask raw shape: {mask.shape}, dtype: {mask.dtype}, min: {mask.min():.4f}, max: {mask.max():.4f}")
+                rospy.loginfo(
+                    f" - mask raw shape: {mask.shape}, dtype: {mask.dtype}, min: {mask.min():.4f}, max: {mask.max():.4f}"
+                )
 
                 # Ensure mono8 format
                 mask_np = mask[0]  # Assume (1, H, W)
@@ -308,7 +325,9 @@ class SAM2Node:
                 mask_array_msg.masks.append(mask_msg)
                 rospy.loginfo(f" - Successfully encoded mask for object ID {obj_id}")
             except Exception as e:
-                rospy.logerr(f"[Tracking] Failed to encode mask for object ID {obj_id}: {e}")
+                rospy.logerr(
+                    f"[Tracking] Failed to encode mask for object ID {obj_id}: {e}"
+                )
                 continue
 
             # Draw visualization overlay
@@ -319,8 +338,15 @@ class SAM2Node:
             ys, xs = np.where(binary_mask)
             if len(xs) > 0 and len(ys) > 0:
                 cx, cy = int(xs.mean()), int(ys.mean())
-                cv2.putText(mask_overlay, f"ID {obj_id}", (cx, cy),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                cv2.putText(
+                    mask_overlay,
+                    f"ID {obj_id}",
+                    (cx, cy),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 255, 0),
+                    2,
+                )
                 rospy.loginfo(f" - Middle point {(cx, cy)}")
 
         # Publish

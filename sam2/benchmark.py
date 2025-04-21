@@ -45,9 +45,9 @@ width, height = frame.shape[:2][::-1]
 predictor.load_first_frame(frame)
 if_init = True
 
-using_point = False # if True, we use point prompt
-using_box = True # if True, we use point prompt
-using_mask= False  # if True, we use mask prompt
+using_point = False  # if True, we use point prompt
+using_box = True  # if True, we use point prompt
+using_mask = False  # if True, we use mask prompt
 
 ann_frame_idx = 0  # the frame index we interact with
 ann_obj_id = (
@@ -78,7 +78,7 @@ elif using_box:
     )
 
 elif using_mask:
-    mask_img_path="masks/aquarium/aquarium_mask.png"
+    mask_img_path = "masks/aquarium/aquarium_mask.png"
     mask = cv2.imread(mask_img_path, cv2.IMREAD_GRAYSCALE)
     mask = mask / 255
 
@@ -99,7 +99,9 @@ with torch.autocast("cuda", torch.bfloat16):
         for i in tqdm(range(runs), disable=not verbose, desc="Benchmarking"):
             cap = cv2.VideoCapture("notebooks/videos/aquarium/aquarium.mp4")
             start = time.time()
-            for _ in tqdm(range(int(num_frames)), desc="Tracking", leave=False, total=num_frames):
+            for _ in tqdm(
+                range(int(num_frames)), desc="Tracking", leave=False, total=num_frames
+            ):
 
                 ret, frame = cap.read()
                 ann_frame_idx += 1
@@ -120,7 +122,6 @@ with torch.autocast("cuda", torch.bfloat16):
 
 print("FPS: ", count * num_frames / total)
 
-    
 
 ##########################################
 

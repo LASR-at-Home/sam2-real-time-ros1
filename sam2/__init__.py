@@ -21,4 +21,3 @@ config_dir = os.path.join(pkg_path, "sam2")
 # Initialize Hydra with this config directory
 if not GlobalHydra.instance().is_initialized():
     initialize_config_dir(config_dir=config_dir, version_base="1.2")
-
