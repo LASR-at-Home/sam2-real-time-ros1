@@ -104,7 +104,6 @@ import cv2
 from cv_bridge import CvBridge
 from lasr_vision_sam2.msg import MaskWithID, MaskWithIDArray, BboxWithFlag, PointsWithLabelsAndFlag
 
-
 # use bfloat16 for the entire notebook
 torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()
 
@@ -116,20 +115,24 @@ if torch.cuda.get_device_properties(0).major >= 8:
 from sam2.build_sam import build_sam2_camera_predictor
 
 import rospy
-from sensor_msgs.msg import Image, Bool
+
+from sensor_msgs.msg import Image
+from std_msgs.msg import Bool
 
 
 class SAM2Node:
     def __init__(self):
+
         # set up predictor
-        sam2_checkpoint = "./checkpoints/sam2.1_hiera_small.pt"
+        # ToDo: need to deal with this stupid absolute path, potentialy add to ros param:
+        ckpt_path = "/home/bentengma/work_space/robocup_ws/src/Base/common/third_party/sam2-real-time-ros1/checkpoints/sam2.1_hiera_small.pt"
         model_cfg = "configs/sam2.1/sam2.1_hiera_s.yaml"
 
         self.bridge = CvBridge()
-        self.predictor = build_sam2_camera_predictor(model_cfg, sam2_checkpoint)
-        self.predictor.reset_state()
+        self.predictor = build_sam2_camera_predictor(model_cfg, ckpt_path)
 
         rospy.loginfo("SAM2 predictor initialized from checkpoint.")
+        print("SAM2 predictor initialized from checkpoint.")
 
         # set up ROS
         rospy.init_node("lasr_vision_sam2_node")
@@ -153,14 +156,16 @@ class SAM2Node:
         )
 
         rospy.loginfo("SAM2Node ROS interfaces set up.")
+        print("SAM2Node ROS interfaces set up.")
 
         self.add_conditioning_frame_flag = True
         self.frame = None
         self.has_init = False
 
     def add_conditioning_frame_flag_callback(self, msg):
-        self.add_conditioning_frame_flag == msg.data
+        self.add_conditioning_frame_flag = msg.data
         rospy.loginfo(f"Adding conditional frame flag set to {self.add_conditioning_frame_flag}")
+        print(f"Adding conditional frame flag set to {self.add_conditioning_frame_flag}")
 
     def bbox_prompt_callback(self, msg):
         if len(msg.bbox_points) != 2:
@@ -174,7 +179,8 @@ class SAM2Node:
         reset_flag = msg.reset
         if reset_flag:
             rospy.loginfo(f"Resetting state for object ID {msg.obj_id}.")
-            self.predictor.reset_state()
+            if "point_inputs_per_obj" in self.predictor.condition_state:
+                self.predictor.reset_state()
             self.has_init = False
 
         if not self.has_init:
@@ -189,8 +195,10 @@ class SAM2Node:
 
         rospy.loginfo(f"Adding BBox for object ID {obj_id}: [{x1:.1f}, {y1:.1f}], [{x2:.1f}, {y2:.1f}]")
 
+        frame_idx = self.predictor.condition_state.get("num_frames", 1) - 1
+        frame_idx = max(0, frame_idx)
         self.predictor.add_new_prompt(
-            frame_idx=self.predictor.condition_state["num_frames"] - 1,
+            frame_idx=frame_idx,
             obj_id=obj_id,
             bbox=bbox,
             points=None,
@@ -211,7 +219,8 @@ class SAM2Node:
         reset_flag = msg.reset
         if reset_flag:
             rospy.loginfo(f"Resetting state for object ID {msg.obj_id}.")
-            self.predictor.reset_state()
+            if "point_inputs_per_obj" in self.predictor.condition_state:
+                self.predictor.reset_state()
             self.has_init = False
 
         if not self.has_init:
@@ -225,8 +234,10 @@ class SAM2Node:
 
         rospy.loginfo(f"Adding {len(points)} points for object ID {obj_id}.")
 
+        frame_idx = self.predictor.condition_state.get("num_frames", 1) - 1
+        frame_idx = max(0, frame_idx)
         self.predictor.add_new_points(
-            frame_idx=self.predictor.condition_state["num_frames"] - 1,
+            frame_idx=frame_idx,
             obj_id=obj_id,
             bbox=None,
             points=points,
