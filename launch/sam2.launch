@@ -1,0 +1,8 @@
+<launch>
+    <description>Start Sam2 services</description>
+    <usage doc="Sam2 service"></usage>
+
+    <node name="lasr_vision_sam2_node" pkg="lasr_vision_sam2" type="lasr_vision_sam2_node.py" output="screen">
+    </node>
+    
+</launch>

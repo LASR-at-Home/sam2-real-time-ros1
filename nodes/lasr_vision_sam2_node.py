@@ -293,6 +293,6 @@ class SAM2Node:
             rospy.logerr(f"Failed to publish output: {e}")
 
 
-if __name__ == "__main__":
-    node = SAM2Node()
-    rospy.spin()
+# if __name__ == "__main__":
+node = SAM2Node()
+rospy.spin()
