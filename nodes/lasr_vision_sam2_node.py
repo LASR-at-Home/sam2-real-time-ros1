@@ -153,7 +153,7 @@ class SAM2Node:
             self.add_conditioning_frame_flag_callback,
         )
         self.image_sub = rospy.Subscriber(
-            "/camera/image_raw", Image, self.image_callback, queue_size=1
+            "/xtion/rgb/image_raw", Image, self.image_callback, queue_size=1
         )
         self.bbox_sub = rospy.Subscriber(
             "/sum2/bboxes",
