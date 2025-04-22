@@ -120,6 +120,8 @@ if torch.cuda.get_device_properties(0).major >= 8:
 from sam2.build_sam import build_sam2_camera_predictor
 
 import rospy
+import rospkg
+import os
 
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool
@@ -129,8 +131,9 @@ class SAM2Node:
     def __init__(self):
 
         # set up predictor
-        # ToDo: need to deal with this stupid absolute path, potentialy add to ros param:
-        ckpt_path = "/home/bentengma/work_space/robocup_ws/src/Base/common/third_party/sam2-real-time-ros1/checkpoints/sam2.1_hiera_small.pt"
+        rospack = rospkg.RosPack()
+        pkg_path = rospack.get_path("lasr_vision_sam2")
+        ckpt_path = os.path.join(pkg_path, "checkpoints", "sam2.1_hiera_small.pt")
         model_cfg = "configs/sam2.1/sam2.1_hiera_s.yaml"
 
         self.bridge = CvBridge()
@@ -231,6 +234,7 @@ class SAM2Node:
             points=None,
             labels=None,
             clear_old_points=msg.clear_old_points,
+            # WARN: the actual coords to give should not be normalised!!! Might be a bug...
             normalize_coords=True,
         )
 
@@ -273,6 +277,7 @@ class SAM2Node:
             points=points,
             labels=labels,
             clear_old_points=msg.clear_old_points,
+            # WARN: the actual coords to give should not be normalised!!! Might be a bug...
             normalize_coords=True,
         )
 

@@ -1,0 +1,2 @@
+rostopic pub /sum2/track_flag std_msgs/Bool "data: true"
+rostopic pub /sum2/add_conditioning_frame_flag std_msgs/Bool "data: true"

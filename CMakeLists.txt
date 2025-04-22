@@ -161,6 +161,18 @@ include_directories(
 #   ${catkin_LIBRARIES}
 # )
 
+include(ExternalProject)
+
+ExternalProject_Add(download_sam2_checkpoint
+  PREFIX ${CMAKE_CURRENT_BINARY_DIR}/sam2_download
+  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/checkpoints
+  CONFIGURE_COMMAND ""
+  BUILD_IN_SOURCE 1
+  BUILD_COMMAND ./download_ckpts.sh
+  INSTALL_COMMAND ""
+  LOG_DOWNLOAD ON
+)
+
 #############
 ## Install ##
 #############
@@ -175,6 +187,10 @@ catkin_install_python(PROGRAMS
   nodes/lasr_vision_sam2_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
+
+# install(DIRECTORY checkpoints/
+#   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/checkpoints
+# )
 
 ## Mark executables for installation
 ## See http://docs.ros.org/melodic/api/catkin/html/howto/format1/building_executables.html
