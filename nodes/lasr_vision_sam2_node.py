@@ -9,6 +9,10 @@ from lasr_vision_sam2.msg import (
     PointsWithLabelsAndFlag,
     CentrePointWithIDArray,
     CentrePointWithID,
+    Detection,
+    DetectionArray,
+    Detection3D,
+    Detection3DArray,
 )
 import message_filters
 
@@ -29,6 +33,7 @@ import os
 from geometry_msgs.msg import Point
 from sensor_msgs.msg import Image, CameraInfo
 from std_msgs.msg import Bool
+from visualization_msgs.msg import Marker
 
 
 class SAM2Node:
@@ -69,15 +74,24 @@ class SAM2Node:
             self.depth_info_sub = message_filters.Subscriber(
                 f"/{self.camera}/depth_registered/camera_info", CameraInfo
             )
-            ts = message_filters.TimeSynchronizer(
-                [self.image_sub, self.depth_sub, self.depth_info_sub], 10
+            ts = message_filters.ApproximateTimeSynchronizer(
+                [self.image_sub, self.depth_sub, self.depth_info_sub], queue_size=25, slop=0.1
             )
             ts.registerCallback(self.image_callback_3d)
+            self.detection3d_pub = rospy.Publisher(
+                "/sam2/detections_3d", Detection3DArray, queue_size=1
+            )
+            self.centre_marker_pub = rospy.Publisher(
+                "/sam2/centre_marker", Marker, queue_size=1
+            )
+
         else:
             self.image_sub = rospy.Subscriber(
                 f"/{self.camera}/rgb/image_raw", Image, self.image_callback, queue_size=1
             )
-            self.mask_centre_pub = rospy.Publisher("/sam2/mask_centres", CentrePointWithIDArray, queue_size=1)
+            self.detection_pub = rospy.Publisher(
+                "/sam2/detections", DetectionArray, queue_size=1
+            )
 
         self.bbox_sub = rospy.Subscriber(
             "/sam2/bboxes",
@@ -89,9 +103,14 @@ class SAM2Node:
             PointsWithLabelsAndFlag,
             self.points_prompt_callback,
         )
-        self.mask_pub = rospy.Publisher("/sam2/masks", MaskWithIDArray, queue_size=1)
+        self.mask_pub = rospy.Publisher(
+            "/sam2/debug/masks", MaskWithIDArray, queue_size=1
+        )
         self.mask_overlay_pub = rospy.Publisher(
-            "/camera/debug_mask_overlay", Image, queue_size=1
+            "/sam2/debug/mask_overlay", Image, queue_size=1
+        )
+        self.centre_pub = rospy.Publisher(
+            "/sam2/debug/centre_points", CentrePointWithIDArray, queue_size=1
         )
 
         rospy.loginfo("SAM2Node ROS interfaces set up.")
@@ -103,9 +122,14 @@ class SAM2Node:
         self.track_flag = False
 
     def track_flag_callback(self, msg):
-        self.track_flag = msg.data
-        rospy.loginfo(f"Track flag set to {self.track_flag}")
-        print(f"Track flag set to {self.track_flag}")
+        if self.has_first_frame:
+            self.track_flag = msg.data
+            rospy.loginfo(f"Track flag set to {self.track_flag}")
+            print(f"Track flag set to {self.track_flag}")
+        else:
+            self.track_flag = False
+            rospy.loginfo(f"Track flag set to {self.track_flag} because there's no promt at all.")
+            print(f"Track flag set to {self.track_flag} because there's no promt at all.")
 
     def add_conditioning_frame_flag_callback(self, msg):
         self.add_conditioning_frame_flag = msg.data
@@ -117,8 +141,9 @@ class SAM2Node:
         )
 
     def bbox_prompt_callback(self, msg):
-        if len(msg.bbox_points) != 2:
-            rospy.logwarn("Received BBox with invalid number of points.")
+        rospy.loginfo("Received BBox Prompt!")
+        if len(msg.xywh) != 4:
+            rospy.logwarn("Received BBox with invalid number of values.")
             return
 
         if self.frame is None:
@@ -164,6 +189,7 @@ class SAM2Node:
         )
 
     def points_prompt_callback(self, msg):
+        rospy.loginfo("Received Point Prompt!")
         if len(msg.xy) % 2 != 0 or len(msg.xy) // 2 != len(msg.labels):
             rospy.logwarn("Received points and labels with mismatched lengths.")
             return
@@ -196,7 +222,7 @@ class SAM2Node:
         rospy.loginfo(
             f"Adding {len(points)} points for object ID {obj_id} to frame {frame_idx}."
         )
-        
+
         self.predictor.add_new_points(
             frame_idx=frame_idx,
             obj_id=obj_id,
@@ -235,6 +261,9 @@ class SAM2Node:
         # Create mask message array
         mask_array_msg = MaskWithIDArray()
         mask_centers_msg = CentrePointWithIDArray()
+        detection_array_msg = Detection3DArray()
+        detection_array_msg.detections = []
+
         mask_overlay = self.frame.copy()
         masks_np = out_mask_logits.cpu().numpy()
 
@@ -271,6 +300,11 @@ class SAM2Node:
             
             ys, xs = np.where(binary_mask)
             if len(xs) > 0 and len(ys) > 0:
+                # Bounding box in [x, y, w, h] format (int32)
+                x_min, y_min = xs.min(), ys.min()
+                x_max, y_max = xs.max(), ys.max()
+                xywh = [int(x_min), int(y_min), int(x_max - x_min), int(y_max - y_min)]
+
                 cx, cy = int(xs.median()), int(ys.median())
                 cv2.putText(
                     mask_overlay,
@@ -293,18 +327,28 @@ class SAM2Node:
                 center_msg.centre_point = pt
                 mask_centers_msg.centre_points.append(center_msg)
 
+                det = Detection()
+                det.name = str(obj_id)
+                det.confidence = 1.0
+                det.xywh = xywh
+                det.xyseg = []
+                detection_array_msg.detections.append(det)
+
         # Publish
         try:
             overlay_msg = self.bridge.cv2_to_imgmsg(mask_overlay, encoding="bgr8")
             self.mask_pub.publish(mask_array_msg)
             self.mask_overlay_pub.publish(overlay_msg)
-            self.mask_centre_pub.publish(mask_centers_msg)
+            self.centre_pub.publish(mask_centers_msg)
             rospy.loginfo("Published mask and overlay.")
+            self.detection_pub.publish(detection_array_msg)
+            rospy.loginfo("Published DetectionArray.")
         except Exception as e:
             rospy.logerr(f"Failed to publish output: {e}")
 
 
     def image_callback_3d(self, rgb_msg, depth_msg, cam_info_msg):
+        # rospy.loginfo("Image received!")
         try:
             self.frame = self.bridge.imgmsg_to_cv2(rgb_msg, desired_encoding="bgr8").copy()
             depth_image = self.bridge.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough").copy()
@@ -319,7 +363,6 @@ class SAM2Node:
         if not self.track_flag:
             return
 
-
         try:
             if self.add_conditioning_frame_flag:
                 self.predictor.add_conditioning_frame(self.frame)
@@ -327,12 +370,16 @@ class SAM2Node:
             out_obj_ids, out_mask_logits = self.predictor.track(self.frame)
             rospy.loginfo(f"Tracking {len(out_obj_ids)} objects in current frame.")
         except Exception as e:
-            rospy.logerr(f"Error during tracking: {e}")
+            rospy.logerr(f"Error during tracking: {e}, deactivated tracking.")
+            # self.track_flag = False
             return
 
         # Create mask message array
         mask_array_msg = MaskWithIDArray()
         mask_centers_msg = CentrePointWithIDArray()
+        detection_array_msg = Detection3DArray()
+        detection_array_msg.detections = []
+
         mask_overlay = self.frame.copy()
         masks_np = out_mask_logits.cpu().numpy()
 
@@ -366,7 +413,7 @@ class SAM2Node:
                 )
                 continue
 
-            # Draw visualization overlay
+            # Draw visualization overlapty
             binary_mask = (mask_np > 0).astype(np.uint8)
             colored = np.zeros_like(mask_overlay)
             colored[:, :, 2] = binary_mask * 255
@@ -374,6 +421,11 @@ class SAM2Node:
             
             ys, xs = np.where(binary_mask)
             if len(xs) > 0 and len(ys) > 0:
+                # Bounding box in [x, y, w, h] format (int32)
+                x_min, y_min = xs.min(), ys.min()
+                x_max, y_max = xs.max(), ys.max()
+                xywh = [int(x_min), int(y_min), int(x_max - x_min), int(y_max - y_min)]
+                
                 # Filter out all valid depth points in the mask
                 depths = depth_image[ys, xs].astype(np.float32)
                 valid = depths > 0
@@ -408,6 +460,36 @@ class SAM2Node:
                 center_msg.centre_point = pt
                 mask_centers_msg.centre_points.append(center_msg)
 
+                det = Detection3D()
+                det.name = str(obj_id)
+                det.confidence = 1.0
+                det.xywh = xywh
+                det.xyseg = []
+                det.point = pt
+                detection_array_msg.detections.append(det)
+
+                marker = Marker()
+                marker.header.frame_id = depth_msg.header.frame_id
+                marker.header.stamp = depth_msg.header.stamp
+                marker.ns = "sam2_tracking"
+                marker.id = obj_id
+                marker.type = Marker.SPHERE
+                marker.action = Marker.ADD
+                marker.pose.position = pt
+                marker.pose.orientation.x = 0.0
+                marker.pose.orientation.y = 0.0
+                marker.pose.orientation.z = 0.0
+                marker.pose.orientation.w = 1.0
+                marker.scale.x = 0.05
+                marker.scale.y = 0.05
+                marker.scale.z = 0.05
+                marker.color.a = 1.0
+                marker.color.r = 0.0
+                marker.color.g = 1.0
+                marker.color.b = 0.0
+                marker.lifetime = rospy.Duration(0.5)
+                self.centre_marker_pub.publish(marker)
+
         # Publish
         try:
             overlay_msg = self.bridge.cv2_to_imgmsg(mask_overlay, encoding="bgr8")
@@ -415,6 +497,8 @@ class SAM2Node:
             self.mask_overlay_pub.publish(overlay_msg)
             self.centre_pub.publish(mask_centers_msg)
             rospy.loginfo("Published mask, overlay, and 3D centers.")
+            self.detection3d_pub.publish(detection_array_msg)
+            rospy.loginfo("Published Detection3DArray.")
         except Exception as e:
             rospy.logerr(f"Failed to publish outputs: {e}")
 

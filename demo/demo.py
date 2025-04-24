@@ -1,114 +1,110 @@
+#!/usr/bin/env python3
 import cv2
 import torch
 import rospy
+import numpy as np
 from ultralytics import YOLO
+from cv_bridge import CvBridge
 from geometry_msgs.msg import Point
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool
-from cv_bridge import CvBridge
-from lasr_vision_sam2.msg import BboxWithFlag
+from lasr_vision_sam2.msg import (
+    BboxWithFlag, Detection, DetectionArray,
+    Detection3D, Detection3DArray
+)
 
-# Initialize ROS node
-rospy.init_node("yolov8_tracker_with_camera", anonymous=True)
-
-# Initialize ROS publishers
-bbox_pub = rospy.Publisher("/sam2/bboxes", BboxWithFlag, queue_size=10)
-image_pub = rospy.Publisher("/camera/image_raw", Image, queue_size=1)
-track_flag_pub = rospy.Publisher("/sam2/track_flag", Bool, queue_size=1)
-
-# Load YOLOv8 model
+# === Config ===
+use_3d = True
+camera = "xtion"
 yolo_model = YOLO("yolov8s.pt")
 
-# Initialize bridge
+# === ROS setup ===
+rospy.init_node("sam2_yolo_test")
 bridge = CvBridge()
 
-# Flags
-person_id = 1
+bbox_pub = rospy.Publisher("/sam2/bboxes", BboxWithFlag, queue_size=10)
+track_flag_pub = rospy.Publisher("/sam2/track_flag", Bool, queue_size=1)
+
+first_frame = None
 prompts_sent = False
 track_flag_sent = False
-first_frame = None
+person_id = 1
 
-# Use webcam (optional, for debugging)
-# cap = cv2.VideoCapture(0)
-# assert cap.isOpened(), "Failed to open video capture"
+# cv2.namedWindow("SAM2 Overlay", cv2.WINDOW_NORMAL)
 
-# === Image callback from ROS topic ===
+def publish_yolo_prompts(frame):
+    global person_id, prompts_sent
+    results = yolo_model(frame)
+    for i, box in enumerate(results[0].boxes):
+        cls = int(box.cls.item())
+        conf = float(box.conf.item())
+        if cls == 0 and conf > 0.5:
+            x1, y1, x2, y2 = map(float, box.xyxy.tolist()[0])
+            msg = BboxWithFlag()
+            msg.obj_id = person_id
+            msg.reset = (i == 0)
+            msg.clear_old_points = True
+            msg.xywh = [int(x1), int(y1), int(x2 - x1), int(y2 - y1)]
+            bbox_pub.publish(msg)
+            rospy.loginfo(f"Published BBox for ID {person_id}")
+            person_id += 1
+            rospy.sleep(0.05)
+    rospy.sleep(0.5)
+    prompts_sent = True
+
+def publish_track_flag():
+    global track_flag_sent
+    for _ in range(3):
+        track_flag_pub.publish(Bool(data=True))
+        rospy.sleep(0.1)
+    rospy.loginfo("Published /sam2/track_flag")
+    track_flag_sent = True
+
 def image_callback(msg):
-    global first_frame, prompts_sent, track_flag_sent, person_id
+    global first_frame, prompts_sent, track_flag_sent
+    try:
+        frame = bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+    except Exception as e:
+        rospy.logerr(f"Failed to decode image: {e}")
+        return
 
     if first_frame is None:
-        try:
-            first_frame = bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-            rospy.loginfo("Received first frame from ROS topic.")
-        except Exception as e:
-            rospy.logerr(f"Failed to decode image: {e}")
-            return
+        first_frame = frame.copy()
+        publish_yolo_prompts(first_frame)
 
-    if first_frame is not None and not prompts_sent:
-        results = yolo_model(first_frame)
-        found_any = False
+    if prompts_sent:
+        publish_track_flag()
 
-        for idx, box in enumerate(results[0].boxes):
-            cls = int(box.cls.item())
-            conf = float(box.conf.item())
-            if cls == 0 and conf > 0.5:
-                x1, y1, x2, y2 = map(float, box.xyxy.tolist()[0])
-                h, w = first_frame.shape[:2]
-                # x1 /= w
-                # x2 /= w
-                # y1 /= h
-                # y2 /= h
+    try:
+        overlay_msg = rospy.wait_for_message("/sam2/debug/mask_overlay", Image, timeout=1.0)
+        overlay = bridge.imgmsg_to_cv2(overlay_msg, desired_encoding="bgr8")
+    except:
+        rospy.logwarn("No mask overlay received.")
+        return
 
-                bbox_msg = BboxWithFlag()
-                bbox_msg.obj_id = person_id
-                bbox_msg.reset = True if idx == 0 else False
-                bbox_msg.clear_old_points = True
-                bbox_msg.bbox_points = [
-                    Point(x=x1, y=y1, z=0.0),
-                    Point(x=x2, y=y2, z=0.0),
-                ]
+    try:
+        if use_3d:
+            detections = rospy.wait_for_message("/sam2/detections_3d", Detection3DArray, timeout=1.0)
+        else:
+            detections = rospy.wait_for_message("/sam2/detections", DetectionArray, timeout=1.0)
+    except:
+        rospy.logwarn("No detection array received.")
+        return
 
-                bbox_pub.publish(bbox_msg)
-                rospy.loginfo(f"Published BBox for person ID {person_id}")
-                person_id += 1
-                found_any = True
-                rospy.sleep(0.05)
+    for det in detections.detections:
+        pt = det.point
+        label = f"ID {det.name}: ({pt.x:.2f}, {pt.y:.2f}, {pt.z:.2f})"
+        if len(det.xywh) >= 2:
+            x, y = det.xywh[0], det.xywh[1]
+            cv2.putText(overlay, label, (x, y - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
-        if found_any:
-            prompts_sent = True
-            rospy.loginfo("Finished sending all BBox prompts.")
+    # cv2.imshow("SAM2 Overlay", overlay)
+    # if cv2.waitKey(1) & 0xFF == 27:
+    #     rospy.signal_shutdown("Exited by user.")
 
-    elif prompts_sent and not track_flag_sent:
-        for _ in range(4):  # repeat to ensure delivery
-            track_flag_pub.publish(Bool(data=True))
-            rospy.sleep(0.1)
-        rospy.loginfo("Published /sam2/track_flag=True")
-        track_flag_sent = True
-
-# Subscribe to ROS image topic
-rospy.Subscriber("/xtion/rgb/image_raw", Image, image_callback, queue_size=1)
-
-# === Optional webcam loop for testing visualization ===
-# while not rospy.is_shutdown():
-#     ret, frame = cap.read()
-#     if not ret:
-#         rospy.logwarn("Failed to read frame from camera.")
-#         continue
-#
-#     try:
-#         ros_img = bridge.cv2_to_imgmsg(frame, encoding="bgr8")
-#         image_pub.publish(ros_img)
-#     except Exception as e:
-#         rospy.logerr(f"Failed to publish image: {e}")
-#         continue
-#
-#     cv2.imshow("YOLOv8 Detection", frame)
-#     if cv2.waitKey(1) == 27:
-#         break
-#
-#     rospy.sleep(0.1)
-
-# Keep node alive
+# === Subscribe ===
+rospy.Subscriber(f"/{camera}/rgb/image_raw", Image, image_callback, queue_size=1)
+rospy.loginfo("YOLO prompt sender + overlay visualizer started.")
 rospy.spin()
-# cap.release()
-# cv2.destroyAllWindows()
+cv2.destroyAllWindows()

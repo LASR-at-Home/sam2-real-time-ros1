@@ -60,6 +60,12 @@ add_message_files(
   MaskWithID.msg
   MaskWithIDArray.msg
   PointsWithLabelsAndFlag.msg
+  CentrePointWithIDArray.msg
+  CentrePointWithID.msg
+  Detection.msg
+  DetectionArray.msg
+  Detection3D.msg
+  Detection3DArray.msg
 )
 
 ## Generate services in the 'srv' folder
