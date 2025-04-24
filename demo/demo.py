@@ -12,9 +12,9 @@ from lasr_vision_sam2.msg import BboxWithFlag
 rospy.init_node("yolov8_tracker_with_camera", anonymous=True)
 
 # Initialize ROS publishers
-bbox_pub = rospy.Publisher("/sum2/bboxes", BboxWithFlag, queue_size=10)
+bbox_pub = rospy.Publisher("/sam2/bboxes", BboxWithFlag, queue_size=10)
 image_pub = rospy.Publisher("/camera/image_raw", Image, queue_size=1)
-track_flag_pub = rospy.Publisher("/sum2/track_flag", Bool, queue_size=1)
+track_flag_pub = rospy.Publisher("/sam2/track_flag", Bool, queue_size=1)
 
 # Load YOLOv8 model
 yolo_model = YOLO("yolov8s.pt")
@@ -82,7 +82,7 @@ def image_callback(msg):
         for _ in range(4):  # repeat to ensure delivery
             track_flag_pub.publish(Bool(data=True))
             rospy.sleep(0.1)
-        rospy.loginfo("Published /sum2/track_flag=True")
+        rospy.loginfo("Published /sam2/track_flag=True")
         track_flag_sent = True
 
 # Subscribe to ROS image topic

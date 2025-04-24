@@ -1,0 +1,1 @@
+lasr_vision_sam2/CentrePointWithID[] centre_points
