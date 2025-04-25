@@ -1,7 +1,14 @@
 <launch>
-    <description>Start Sam2 services</description>
-    <usage doc="Sam2 service"></usage>
+    <arg name="camera" default="xtion" />
+    <arg name="use_3d" default="true" />
+    <arg name="using_lasr_msgs" default="true" />
 
-    <node name="lasr_vision_sam2_node" pkg="lasr_vision_sam2" type="lasr_vision_sam2_node.py" output="screen"/>
-    
+    <param name="camera" value="$(arg camera)" />
+    <param name="use_3d" value="$(arg use_3d)" />
+    <param name="using_lasr_msgs" value="$(arg using_lasr_msgs)" />
+
+    <node name="lasr_vision_sam2_node"
+          pkg="lasr_vision_sam2"
+          type="lasr_vision_sam2_node.py"
+          output="screen" />
 </launch>

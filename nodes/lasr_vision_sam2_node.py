@@ -2,18 +2,6 @@ import torch
 import numpy as np
 import cv2
 from cv_bridge import CvBridge
-from lasr_vision_sam2.msg import (
-    MaskWithID,
-    MaskWithIDArray,
-    BboxWithFlag,
-    PointsWithLabelsAndFlag,
-    CentrePointWithIDArray,
-    CentrePointWithID,
-    Detection,
-    DetectionArray,
-    Detection3D,
-    Detection3DArray,
-)
 import message_filters
 
 # use bfloat16 for the entire notebook
@@ -36,6 +24,37 @@ from std_msgs.msg import Bool
 from visualization_msgs.msg import Marker
 
 
+rospy.init_node("lasr_vision_sam2_node")
+using_lasr_msgs = using_lasr_msgs = rospy.get_param("~using_lasr_msgs", False)
+
+if using_lasr_msgs:
+    from lasr_vision_msgs.msg import (
+        MaskWithID,
+        MaskWithIDArray,
+        BboxWithFlag,
+        PointsWithLabelsAndFlag,
+        CentrePointWithIDArray,
+        CentrePointWithID,
+        Detection,
+        DetectionArray,
+        Detection3D,
+        Detection3DArray,
+    )
+else:
+    from lasr_vision_sam2.msg import (
+        MaskWithID,
+        MaskWithIDArray,
+        BboxWithFlag,
+        PointsWithLabelsAndFlag,
+        CentrePointWithIDArray,
+        CentrePointWithID,
+        Detection,
+        DetectionArray,
+        Detection3D,
+        Detection3DArray,
+    )
+
+
 class SAM2Node:
     def __init__(self):
 
@@ -48,14 +67,13 @@ class SAM2Node:
         self.bridge = CvBridge()
         self.predictor = build_sam2_camera_predictor(model_cfg, ckpt_path)
 
-        self.camera = "xtion"  # todo: make it receive from a parameter
-        self.use_3d = True  # todo: make this defined by launch file
+        self.camera = rospy.get_param("~camera", "xtion")
+        self.use_3d = rospy.get_param("~use_3d", True)
 
         rospy.loginfo("SAM2 predictor initialized from checkpoint.")
         print("SAM2 predictor initialized from checkpoint.")
 
         # set up ROS
-        rospy.init_node("lasr_vision_sam2_node")
         self.track_flag_sub = rospy.Subscriber(
             "/sam2/track_flag", Bool, self.track_flag_callback
         )

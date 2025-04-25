@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 import cv2
-import torch
 import rospy
-import numpy as np
 from ultralytics import YOLO
 from cv_bridge import CvBridge
-from geometry_msgs.msg import Point
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool
 from lasr_vision_sam2.msg import (
-    BboxWithFlag, Detection, DetectionArray,
-    Detection3D, Detection3DArray
+    BboxWithFlag, 
+    DetectionArray,
+    Detection3DArray,
 )
 
 # === Config ===

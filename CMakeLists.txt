@@ -10,7 +10,6 @@ project(lasr_vision_sam2)
 find_package(catkin REQUIRED catkin_virtualenv)
 find_package(catkin REQUIRED COMPONENTS
   rospy
-  std_msgs
   sensor_msgs
   geometry_msgs
   message_generation
