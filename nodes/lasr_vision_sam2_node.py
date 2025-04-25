@@ -29,30 +29,28 @@ using_lasr_msgs = using_lasr_msgs = rospy.get_param("~using_lasr_msgs", False)
 
 if using_lasr_msgs:
     from lasr_vision_msgs.msg import (
-        MaskWithID,
-        MaskWithIDArray,
         BboxWithFlag,
         PointsWithLabelsAndFlag,
-        CentrePointWithIDArray,
-        CentrePointWithID,
         Detection,
         DetectionArray,
         Detection3D,
         Detection3DArray,
     )
 else:
-    from lasr_vision_sam2.msg import (
-        MaskWithID,
-        MaskWithIDArray,
+    from lasr_vision_sam2 import (
         BboxWithFlag,
         PointsWithLabelsAndFlag,
-        CentrePointWithIDArray,
-        CentrePointWithID,
         Detection,
         DetectionArray,
         Detection3D,
         Detection3DArray,
     )
+from lasr_vision_sam2.msg import (
+    MaskWithID,
+    MaskWithIDArray,
+    CentrePointWithIDArray,
+    CentrePointWithID,
+)
 
 
 class SAM2Node:
