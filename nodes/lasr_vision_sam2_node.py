@@ -81,7 +81,7 @@ class SAM2Node:
         self.condition_frame_flag_sub = rospy.Subscriber(
             "/sam2/add_conditioning_frame_flag",
             Bool,
-            self.add_conditioning_frame_flag_callback
+            self.add_conditioning_frame_flag_callback,
         )
         if self.use_3d:
             self.image_sub = message_filters.Subscriber(
@@ -94,7 +94,9 @@ class SAM2Node:
                 f"/{self.camera}/depth_registered/camera_info", CameraInfo
             )
             ts = message_filters.ApproximateTimeSynchronizer(
-                [self.image_sub, self.depth_sub, self.depth_info_sub], queue_size=25, slop=0.1
+                [self.image_sub, self.depth_sub, self.depth_info_sub],
+                queue_size=25,
+                slop=0.1,
             )
             ts.registerCallback(self.image_callback_3d)
             self.detection3d_pub = rospy.Publisher(
@@ -106,14 +108,20 @@ class SAM2Node:
 
         else:
             self.image_sub = rospy.Subscriber(
-                f"/{self.camera}/rgb/image_raw", Image, self.image_callback, queue_size=1
+                f"/{self.camera}/rgb/image_raw",
+                Image,
+                self.image_callback,
+                queue_size=1,
             )
             self.detection_pub = rospy.Publisher(
                 "/sam2/detections", DetectionArray, queue_size=1
             )
 
         self.prompt_array_sub = rospy.Subscriber(
-            "/sam2/prompt_arrays", PromptArrays, self.prompt_array_callback, queue_size=1
+            "/sam2/prompt_arrays",
+            PromptArrays,
+            self.prompt_array_callback,
+            queue_size=1,
         )
         self.bbox_sub = rospy.Subscriber(
             "/sam2/bboxes",
@@ -151,8 +159,12 @@ class SAM2Node:
             print(f"Track flag set to {self.track_flag}")
         else:
             self.track_flag = False
-            rospy.loginfo(f"Track flag set to {self.track_flag} because there's no promt at all.")
-            print(f"Track flag set to {self.track_flag} because there's no promt at all.")
+            rospy.loginfo(
+                f"Track flag set to {self.track_flag} because there's no promt at all."
+            )
+            print(
+                f"Track flag set to {self.track_flag} because there's no promt at all."
+            )
 
     def add_conditioning_frame_flag_callback(self, msg):
         self.add_conditioning_frame_flag = msg.data
@@ -214,11 +226,16 @@ class SAM2Node:
 
         # Process Point prompts
         for point_msg in msg.point_array:
-            if len(point_msg.xy) % 2 != 0 or len(point_msg.xy) // 2 != len(point_msg.labels):
+            if len(point_msg.xy) % 2 != 0 or len(point_msg.xy) // 2 != len(
+                point_msg.labels
+            ):
                 rospy.logwarn(f"Invalid point/label count for ID={point_msg.obj_id}")
                 continue
 
-            points = [[point_msg.xy[i], point_msg.xy[i + 1]] for i in range(0, len(point_msg.xy), 2)]
+            points = [
+                [point_msg.xy[i], point_msg.xy[i + 1]]
+                for i in range(0, len(point_msg.xy), 2)
+            ]
             labels = list(point_msg.labels)
 
             rospy.loginfo(
@@ -247,7 +264,7 @@ class SAM2Node:
         if self.frame is None:
             rospy.logwarn("Received BBox but no frame is available yet.")
             return
-        
+
         self.block = True
 
         reset_flag = msg.reset
@@ -299,7 +316,7 @@ class SAM2Node:
         if self.frame is None:
             rospy.logwarn("Received points prompt but no frame is available.")
             return
-        
+
         self.block = True
 
         reset_flag = msg.reset
@@ -318,7 +335,7 @@ class SAM2Node:
         obj_id = msg.obj_id
 
         # Reshape xy: [x1, y1, x2, y2, ...] -> [[x1, y1], [x2, y2], ...]
-        points = [ [msg.xy[i], msg.xy[i+1]] for i in range(0, len(msg.xy), 2) ]
+        points = [[msg.xy[i], msg.xy[i + 1]] for i in range(0, len(msg.xy), 2)]
         labels = list(msg.labels)
 
         frame_idx = self.predictor.condition_state.get("num_frames", 1) - 1
@@ -353,7 +370,7 @@ class SAM2Node:
 
         if not self.track_flag:
             return
-        
+
         if self.block:
             return
 
@@ -406,7 +423,7 @@ class SAM2Node:
             colored = np.zeros_like(mask_overlay)
             colored[:, :, 2] = binary_mask * 255
             mask_overlay = cv2.addWeighted(mask_overlay, 1.0, colored, 0.5, 0)
-            
+
             ys, xs = np.where(binary_mask)
             if len(xs) > 0 and len(ys) > 0:
                 # Bounding box in [x, y, w, h] format (int32)
@@ -455,12 +472,15 @@ class SAM2Node:
         except Exception as e:
             rospy.logerr(f"Failed to publish output: {e}")
 
-
     def image_callback_3d(self, rgb_msg, depth_msg, cam_info_msg):
         # rospy.loginfo("Image received!")
         try:
-            self.frame = self.bridge.imgmsg_to_cv2(rgb_msg, desired_encoding="bgr8").copy()
-            depth_image = self.bridge.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough").copy()
+            self.frame = self.bridge.imgmsg_to_cv2(
+                rgb_msg, desired_encoding="bgr8"
+            ).copy()
+            depth_image = self.bridge.imgmsg_to_cv2(
+                depth_msg, desired_encoding="passthrough"
+            ).copy()
         except Exception as e:
             rospy.logerr(f"Failed to decode image or depth: {e}")
             return
@@ -528,14 +548,14 @@ class SAM2Node:
             colored = np.zeros_like(mask_overlay)
             colored[:, :, 2] = binary_mask * 255
             mask_overlay = cv2.addWeighted(mask_overlay, 1.0, colored, 0.5, 0)
-            
+
             ys, xs = np.where(binary_mask)
             if len(xs) > 0 and len(ys) > 0:
                 # Bounding box in [x, y, w, h] format (int32)
                 x_min, y_min = xs.min(), ys.min()
                 x_max, y_max = xs.max(), ys.max()
                 xywh = [int(x_min), int(y_min), int(x_max - x_min), int(y_max - y_min)]
-                
+
                 # Filter out all valid depth points in the mask
                 depths = depth_image[ys, xs].astype(np.float32)
                 valid = depths > 0
@@ -555,9 +575,18 @@ class SAM2Node:
                     pt.y = (v_median - cy) * d_median / fy
                     pt.z = d_median
 
-                    cv2.putText(mask_overlay, f"ID {obj_id}", (u_median, v_median),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                    rospy.loginfo(f" - 3D median center: ({pt.x:.2f}, {pt.y:.2f}, {pt.z:.2f})")
+                    cv2.putText(
+                        mask_overlay,
+                        f"ID {obj_id}",
+                        (u_median, v_median),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8,
+                        (0, 255, 0),
+                        2,
+                    )
+                    rospy.loginfo(
+                        f" - 3D median center: ({pt.x:.2f}, {pt.y:.2f}, {pt.z:.2f})"
+                    )
 
                     center_msg = CentrePointWithID()
                     center_msg.id = obj_id
