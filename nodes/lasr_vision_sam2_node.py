@@ -17,6 +17,7 @@ from sam2.build_sam import build_sam2_camera_predictor
 import rospy
 import rospkg
 import os
+import importlib
 
 from geometry_msgs.msg import Point
 from sensor_msgs.msg import Image, CameraInfo
@@ -25,37 +26,39 @@ from visualization_msgs.msg import Marker
 
 
 rospy.init_node("lasr_vision_sam2_node")
-using_lasr_msgs = using_lasr_msgs = rospy.get_param("~using_lasr_msgs", False)
+using_lasr_msgs = rospy.get_param("using_lasr_msgs", False)
 
-if using_lasr_msgs:
-    from lasr_vision_msgs.msg import (
-        BboxWithFlag,
-        PointsWithLabelsAndFlag,
-        Detection,
-        DetectionArray,
-        Detection3D,
-        Detection3DArray,
+try:
+    if using_lasr_msgs:
+        rospy.loginfo("Importing LASR MSGs...")
+        print("Importing LASR MSGs...")
+    else:
+        rospy.loginfo("Importing SAM2 MSGs...")
+        print("Importing SAM2 MSGs...")
+    msg_module = importlib.import_module(
+        "lasr_vision_msgs.msg" if using_lasr_msgs else "lasr_vision_sam2.msg"
     )
-else:
-    from lasr_vision_sam2 import (
-        BboxWithFlag,
-        PointsWithLabelsAndFlag,
-        Detection,
-        DetectionArray,
-        Detection3D,
-        Detection3DArray,
-    )
+    BboxWithFlag = getattr(msg_module, "Sam2BboxWithFlag")
+    PointsWithLabelsAndFlag = getattr(msg_module, "Sam2PointsWithLabelsAndFlag")
+    PromptArrays = getattr(msg_module, "Sam2PromptArrays")
+    Detection = getattr(msg_module, "Detection")
+    DetectionArray = getattr(msg_module, "DetectionArray")
+    Detection3D = getattr(msg_module, "Detection3D")
+    Detection3DArray = getattr(msg_module, "Detection3DArray")
+except Exception as e:
+    rospy.logerr(f"Failed to import messages: {e}")
+    raise
+
 from lasr_vision_sam2.msg import (
-    MaskWithID,
-    MaskWithIDArray,
-    CentrePointWithIDArray,
-    CentrePointWithID,
+    Sam2MaskWithID as MaskWithID,
+    Sam2MaskWithIDArray as MaskWithIDArray,
+    Sam2CentrePointWithIDArray as CentrePointWithIDArray,
+    Sam2CentrePointWithID as CentrePointWithID,
 )
 
 
 class SAM2Node:
     def __init__(self):
-
         # set up predictor
         rospack = rospkg.RosPack()
         pkg_path = rospack.get_path("lasr_vision_sam2")
@@ -65,8 +68,8 @@ class SAM2Node:
         self.bridge = CvBridge()
         self.predictor = build_sam2_camera_predictor(model_cfg, ckpt_path)
 
-        self.camera = rospy.get_param("~camera", "xtion")
-        self.use_3d = rospy.get_param("~use_3d", True)
+        self.camera = rospy.get_param("camera", "xtion")
+        self.use_3d = rospy.get_param("use_3d", True)
 
         rospy.loginfo("SAM2 predictor initialized from checkpoint.")
         print("SAM2 predictor initialized from checkpoint.")
@@ -109,6 +112,9 @@ class SAM2Node:
                 "/sam2/detections", DetectionArray, queue_size=1
             )
 
+        self.prompt_array_sub = rospy.Subscriber(
+            "/sam2/prompt_arrays", PromptArrays, self.prompt_array_callback, queue_size=1
+        )
         self.bbox_sub = rospy.Subscriber(
             "/sam2/bboxes",
             BboxWithFlag,
@@ -136,6 +142,7 @@ class SAM2Node:
         self.frame = None
         self.has_first_frame = False
         self.track_flag = False
+        self.block = False
 
     def track_flag_callback(self, msg):
         if self.has_first_frame:
@@ -156,6 +163,81 @@ class SAM2Node:
             f"Adding conditional frame flag set to {self.add_conditioning_frame_flag}"
         )
 
+    def prompt_array_callback(self, msg):
+        rospy.loginfo("Received PromptArrays message!")
+        if self.frame is None:
+            rospy.logwarn("No available frame to apply prompts.")
+            return
+
+        self.block = True
+
+        if msg.reset:
+            rospy.loginfo("Reset flag is set. Resetting predictor state.")
+            if "point_inputs_per_obj" in self.predictor.condition_state:
+                self.predictor.reset_state()
+            self.has_first_frame = False
+            self.track_flag = False
+
+        if not self.has_first_frame:
+            self.predictor.load_first_frame(self.frame)
+            self.has_first_frame = True
+            rospy.loginfo("Loaded first frame for BBox prompt.")
+
+        frame_idx = self.predictor.condition_state.get("num_frames", 1) - 1
+        frame_idx = max(0, frame_idx)
+
+        # Process BBox prompts
+        for bbox_msg in msg.bbox_array:
+            if len(bbox_msg.xywh) != 4:
+                rospy.logwarn(f"Invalid BBox dimensions for ID={bbox_msg.obj_id}")
+                continue
+
+            x, y, w, h = bbox_msg.xywh
+            x1, y1 = x, y
+            x2, y2 = x + w, y + h
+            bbox = [[x1, y1], [x2, y2]]
+
+            rospy.loginfo(
+                f"Adding BBox for object ID {bbox_msg.obj_id}: "
+                f"[{x1}, {y1}], [{x2}, {y2}] to frame {frame_idx}."
+            )
+
+            self.predictor.add_new_prompt(
+                frame_idx=frame_idx,
+                obj_id=bbox_msg.obj_id,
+                bbox=bbox,
+                points=None,
+                labels=None,
+                clear_old_points=bbox_msg.clear_old_points,
+                normalize_coords=True,
+            )
+
+        # Process Point prompts
+        for point_msg in msg.point_array:
+            if len(point_msg.xy) % 2 != 0 or len(point_msg.xy) // 2 != len(point_msg.labels):
+                rospy.logwarn(f"Invalid point/label count for ID={point_msg.obj_id}")
+                continue
+
+            points = [[point_msg.xy[i], point_msg.xy[i + 1]] for i in range(0, len(point_msg.xy), 2)]
+            labels = list(point_msg.labels)
+
+            rospy.loginfo(
+                f"Adding {len(points)} points for object ID {point_msg.obj_id} "
+                f"to frame {frame_idx}."
+            )
+
+            self.predictor.add_new_points(
+                frame_idx=frame_idx,
+                obj_id=point_msg.obj_id,
+                bbox=None,
+                points=points,
+                labels=labels,
+                clear_old_points=point_msg.clear_old_points,
+                normalize_coords=True,
+            )
+
+        self.block = False
+
     def bbox_prompt_callback(self, msg):
         rospy.loginfo("Received BBox Prompt!")
         if len(msg.xywh) != 4:
@@ -165,6 +247,8 @@ class SAM2Node:
         if self.frame is None:
             rospy.logwarn("Received BBox but no frame is available yet.")
             return
+        
+        self.block = True
 
         reset_flag = msg.reset
         if reset_flag:
@@ -204,6 +288,8 @@ class SAM2Node:
             normalize_coords=True,
         )
 
+        self.block = False
+
     def points_prompt_callback(self, msg):
         rospy.loginfo("Received Point Prompt!")
         if len(msg.xy) % 2 != 0 or len(msg.xy) // 2 != len(msg.labels):
@@ -213,6 +299,8 @@ class SAM2Node:
         if self.frame is None:
             rospy.logwarn("Received points prompt but no frame is available.")
             return
+        
+        self.block = True
 
         reset_flag = msg.reset
         if reset_flag:
@@ -250,6 +338,8 @@ class SAM2Node:
             normalize_coords=True,
         )
 
+        self.block = False
+
     def image_callback(self, msg):
         try:
             self.frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8").copy()
@@ -262,6 +352,9 @@ class SAM2Node:
             return  # Waiting for bbox or points to start
 
         if not self.track_flag:
+            return
+        
+        if self.block:
             return
 
         try:
@@ -385,9 +478,10 @@ class SAM2Node:
                 rospy.loginfo("Conditioning frame added.")
             out_obj_ids, out_mask_logits = self.predictor.track(self.frame)
             rospy.loginfo(f"Tracking {len(out_obj_ids)} objects in current frame.")
+            rospy.loginfo(f"Tracking {out_obj_ids}.")
         except Exception as e:
             rospy.logerr(f"Error during tracking: {e}, deactivated tracking.")
-            # self.track_flag = False
+            self.track_flag = False
             return
 
         # Create mask message array
@@ -398,14 +492,14 @@ class SAM2Node:
 
         mask_overlay = self.frame.copy()
         masks_np = out_mask_logits.cpu().numpy()
+        rospy.loginfo(f"Tracking masks {len(masks_np)}.")
 
         fx = cam_info_msg.K[0]
         fy = cam_info_msg.K[4]
         cx = cam_info_msg.K[2]
         cy = cam_info_msg.K[5]
 
-        for i, mask in enumerate(masks_np):
-            obj_id = out_obj_ids[i]
+        for obj_id, mask in zip(out_obj_ids, masks_np):
 
             try:
                 # Print debug shape/type info
@@ -464,25 +558,26 @@ class SAM2Node:
                     cv2.putText(mask_overlay, f"ID {obj_id}", (u_median, v_median),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                     rospy.loginfo(f" - 3D median center: ({pt.x:.2f}, {pt.y:.2f}, {pt.z:.2f})")
+
+                    center_msg = CentrePointWithID()
+                    center_msg.id = obj_id
+                    center_msg.centre_point = pt
+                    mask_centers_msg.centre_points.append(center_msg)
+
+                    det = Detection3D()
+                    det.name = str(obj_id)
+                    det.confidence = 1.0
+                    det.xywh = xywh
+                    det.xyseg = []
+                    det.point = pt
+                    detection_array_msg.detections.append(det)
+
                 else:
-                    rospy.logwarn(f"No valid depth in mask for object ID {obj_id}, using 2D fallback")
-                    pt = Point()
-                    pt.x = float(np.median(xs))
-                    pt.y = float(np.median(ys))
-                    pt.z = 0.0
-
-                center_msg = CentrePointWithID()
-                center_msg.id = obj_id
-                center_msg.centre_point = pt
-                mask_centers_msg.centre_points.append(center_msg)
-
-                det = Detection3D()
-                det.name = str(obj_id)
-                det.confidence = 1.0
-                det.xywh = xywh
-                det.xyseg = []
-                det.point = pt
-                detection_array_msg.detections.append(det)
+                    rospy.logwarn(f"No valid depth in mask for object ID {obj_id}.")
+                #     pt = Point()
+                #     pt.x = float(np.median(xs))
+                #     pt.y = float(np.median(ys))
+                #     pt.z = 0.0
 
                 marker = Marker()
                 marker.header.frame_id = depth_msg.header.frame_id
@@ -496,15 +591,18 @@ class SAM2Node:
                 marker.pose.orientation.y = 0.0
                 marker.pose.orientation.z = 0.0
                 marker.pose.orientation.w = 1.0
-                marker.scale.x = 0.05
-                marker.scale.y = 0.05
-                marker.scale.z = 0.05
+                marker.scale.x = 0.25
+                marker.scale.y = 0.25
+                marker.scale.z = 0.25
                 marker.color.a = 1.0
                 marker.color.r = 0.0
                 marker.color.g = 1.0
                 marker.color.b = 0.0
                 marker.lifetime = rospy.Duration(0.5)
                 self.centre_marker_pub.publish(marker)
+
+            else:
+                rospy.loginfo(f"No valid mask detected for object ID {obj_id}.")
 
         # Publish
         try:

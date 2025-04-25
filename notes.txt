@@ -1,2 +1,3 @@
 rostopic pub /sam2/track_flag std_msgs/Bool "data: true"
 rostopic pub /sam2/add_conditioning_frame_flag std_msgs/Bool "data: true"
+roslaunch tiago_2dnav_gazebo tiago_navigation.launch robot:=steel public_sim:=false

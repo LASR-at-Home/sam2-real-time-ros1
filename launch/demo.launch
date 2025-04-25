@@ -1,0 +1,10 @@
+<launch>
+    <node name="sam2_yolo_test"
+          pkg="lasr_vision_sam2"
+          type="demo.py"
+          output="screen">
+        <param name="using_lasr_msgs" value="false" />
+        <param name="camera" value="xtion" />
+        <param name="use_3d" value="true" />
+    </node>
+</launch>

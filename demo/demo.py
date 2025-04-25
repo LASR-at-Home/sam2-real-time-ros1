@@ -1,77 +1,107 @@
 #!/usr/bin/env python3
-import cv2
 import rospy
+import importlib
+import cv2
 from ultralytics import YOLO
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool
-from lasr_vision_sam2.msg import (
-    BboxWithFlag, 
-    DetectionArray,
-    Detection3DArray,
-)
 
-# === Config ===
-use_3d = True
-camera = "xtion"
-yolo_model = YOLO("yolov8s.pt")
+# === Initialize ROS node first ===
+rospy.init_node("sam2_yolo_test")
+
+# === Parameters ===
+using_lasr_msgs = rospy.get_param("using_lasr_msgs", False)
+camera = rospy.get_param("camera", "xtion")
+use_3d = rospy.get_param("use_3d", True)
+
+# === Dynamic import message types ===
+try:
+    if using_lasr_msgs:
+        rospy.loginfo("Importing LASR MSGs...")
+    else:
+        rospy.loginfo("Importing SAM2 MSGs...")
+    msg_module = importlib.import_module(
+        "lasr_vision_msgs.msg" if using_lasr_msgs else "lasr_vision_sam2.msg"
+    )
+    BboxWithFlag = getattr(msg_module, "Sam2BboxWithFlag")
+    PromptArrays = getattr(msg_module, "Sam2PromptArrays")
+    DetectionArray = getattr(msg_module, "DetectionArray")
+    Detection3DArray = getattr(msg_module, "Detection3DArray")
+except Exception as e:
+    rospy.logerr(f"Failed to import messages: {e}")
+    raise
 
 # === ROS setup ===
-rospy.init_node("sam2_yolo_test")
 bridge = CvBridge()
+yolo_model = YOLO("yolov8s.pt")
 
-bbox_pub = rospy.Publisher("/sam2/bboxes", BboxWithFlag, queue_size=10)
+prompt_pub = rospy.Publisher("/sam2/prompt_arrays", PromptArrays, queue_size=1)
 track_flag_pub = rospy.Publisher("/sam2/track_flag", Bool, queue_size=1)
 
-first_frame = None
-prompts_sent = False
-track_flag_sent = False
-person_id = 1
+# === Internal states ===
+state = {
+    "first_frame": None,
+    "prompts_sent": False,
+    "track_flag_sent": False,
+    "person_id": 1,
+}
 
-# cv2.namedWindow("SAM2 Overlay", cv2.WINDOW_NORMAL)
+# === Functions ===
 
-def publish_yolo_prompts(frame):
-    global person_id, prompts_sent
+def publish_yolo_prompts(frame, state):
+    """Run YOLO and publish prompt arrays."""
     results = yolo_model(frame)
+    bbox_list = []
+
     for i, box in enumerate(results[0].boxes):
         cls = int(box.cls.item())
         conf = float(box.conf.item())
         if cls == 0 and conf > 0.5:
             x1, y1, x2, y2 = map(float, box.xyxy.tolist()[0])
-            msg = BboxWithFlag()
-            msg.obj_id = person_id
-            msg.reset = (i == 0)
-            msg.clear_old_points = True
-            msg.xywh = [int(x1), int(y1), int(x2 - x1), int(y2 - y1)]
-            bbox_pub.publish(msg)
-            rospy.loginfo(f"Published BBox for ID {person_id}")
-            person_id += 1
-            rospy.sleep(0.05)
-    rospy.sleep(0.5)
-    prompts_sent = True
+            bbox_msg = BboxWithFlag()
+            bbox_msg.obj_id = state["person_id"]
+            bbox_msg.reset = False
+            bbox_msg.clear_old_points = True
+            bbox_msg.xywh = [int(x1), int(y1), int(x2 - x1), int(y2 - y1)]
+            bbox_list.append(bbox_msg)
+            rospy.loginfo(f"Prepared BBox for ID {state['person_id']}")
+            state["person_id"] += 1
 
-def publish_track_flag():
-    global track_flag_sent
+    if bbox_list:
+        prompt_msg = PromptArrays()
+        prompt_msg.bbox_array = bbox_list
+        prompt_msg.point_array = []
+        prompt_msg.reset = True  # full reset
+        prompt_pub.publish(prompt_msg)
+        rospy.loginfo(f"Published PromptArrays with {len(bbox_list)} BBoxes.")
+        rospy.sleep(1.0)
+        state["prompts_sent"] = True
+    else:
+        rospy.logwarn("No valid persons detected by YOLO.")
+
+def publish_track_flag(state):
+    """Publish /sam2/track_flag several times."""
     for _ in range(3):
         track_flag_pub.publish(Bool(data=True))
         rospy.sleep(0.1)
-    rospy.loginfo("Published /sam2/track_flag")
-    track_flag_sent = True
+    rospy.loginfo("Published /sam2/track_flag.")
+    state["track_flag_sent"] = True
 
 def image_callback(msg):
-    global first_frame, prompts_sent, track_flag_sent
+    """Main image callback."""
     try:
         frame = bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
     except Exception as e:
         rospy.logerr(f"Failed to decode image: {e}")
         return
 
-    if first_frame is None:
-        first_frame = frame.copy()
-        publish_yolo_prompts(first_frame)
+    if state["first_frame"] is None:
+        state["first_frame"] = frame.copy()
+        publish_yolo_prompts(state["first_frame"], state)
 
-    if prompts_sent:
-        publish_track_flag()
+    if state["prompts_sent"] and not state["track_flag_sent"]:
+        publish_track_flag(state)
 
     try:
         overlay_msg = rospy.wait_for_message("/sam2/debug/mask_overlay", Image, timeout=1.0)
@@ -97,12 +127,14 @@ def image_callback(msg):
             cv2.putText(overlay, label, (x, y - 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
+    # === Visualization (optional) ===
     # cv2.imshow("SAM2 Overlay", overlay)
     # if cv2.waitKey(1) & 0xFF == 27:
     #     rospy.signal_shutdown("Exited by user.")
 
 # === Subscribe ===
 rospy.Subscriber(f"/{camera}/rgb/image_raw", Image, image_callback, queue_size=1)
-rospy.loginfo("YOLO prompt sender + overlay visualizer started.")
+
+rospy.loginfo("SAM2 YOLO prompt sender + overlay visualizer started.")
 rospy.spin()
 cv2.destroyAllWindows()

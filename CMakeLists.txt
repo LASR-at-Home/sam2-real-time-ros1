@@ -55,12 +55,13 @@ catkin_generate_virtualenv(
 ## Generate messages in the 'msg' folder
 add_message_files(
   FILES
-  BboxWithFlag.msg
-  MaskWithID.msg
-  MaskWithIDArray.msg
-  PointsWithLabelsAndFlag.msg
-  CentrePointWithIDArray.msg
-  CentrePointWithID.msg
+  Sam2BboxWithFlag.msg
+  Sam2MaskWithID.msg
+  Sam2MaskWithIDArray.msg
+  Sam2PointsWithLabelsAndFlag.msg
+  Sam2CentrePointWithIDArray.msg
+  Sam2CentrePointWithID.msg
+  Sam2PromptArrays.msg
   Detection.msg
   DetectionArray.msg
   Detection3D.msg
