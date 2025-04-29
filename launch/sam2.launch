@@ -1,10 +1,12 @@
 <launch>
     <arg name="camera" default="xtion" />
     <arg name="use_3d" default="true" />
+    <arg name="target_frame" default="map" />
     <arg name="using_lasr_msgs" default="true" />
 
     <param name="camera" value="$(arg camera)" />
     <param name="use_3d" value="$(arg use_3d)" />
+    <param name="target_frame" value="$(arg target_frame)" />
     <param name="using_lasr_msgs" value="$(arg using_lasr_msgs)" />
 
     <node name="lasr_vision_sam2_node"

@@ -18,8 +18,10 @@ import rospy
 import rospkg
 import os
 import importlib
+import tf2_ros as tf
+from tf2_geometry_msgs.tf2_geometry_msgs import do_transform_point
 
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PointStamped
 from sensor_msgs.msg import Image, CameraInfo
 from std_msgs.msg import Bool
 from visualization_msgs.msg import Marker
@@ -70,6 +72,7 @@ class SAM2Node:
 
         self.camera = rospy.get_param("camera", "xtion")
         self.use_3d = rospy.get_param("use_3d", True)
+        self.target_frame = rospy.get_param("target_frame", None)
 
         rospy.loginfo("SAM2 predictor initialized from checkpoint.")
         print("SAM2 predictor initialized from checkpoint.")
@@ -574,6 +577,27 @@ class SAM2Node:
                     pt.x = (u_median - cx) * d_median / fx
                     pt.y = (v_median - cy) * d_median / fy
                     pt.z = d_median
+
+                    target_frame = self.target_frame or depth_msg.header.frame_id
+                    try:
+                        transform = self._tf_buffer.lookup_transform(
+                            target_frame,
+                            depth_msg.header.frame_id,
+                            depth_msg.header.stamp,
+                            rospy.Duration(1.0),
+                        )
+                    except (
+                        tf.LookupException,
+                        tf.ConnectivityException,
+                        tf.ExtrapolationException,
+                    ) as e:
+                        raise rospy.ServiceException(str(e))
+                    
+                    point_stamped = PointStamped()
+                    point_stamped.header = depth_msg.header
+                    point_stamped.point = pt
+                    point_stamped_transformed = do_transform_point(point_stamped, transform)
+                    pt = point_stamped_transformed
 
                     cv2.putText(
                         mask_overlay,
