@@ -1,4 +1,5 @@
 <launch>
+    <include file="$(find lasr_vision_sam2)/launch/sam2.launch"/>
     <node name="sam2_yolo_test"
           pkg="lasr_vision_sam2"
           type="demo.py"

@@ -61,11 +61,21 @@ from lasr_vision_sam2.msg import (
 
 class SAM2Node:
     def __init__(self):
+        # setting up instance parameters
+        self.add_conditioning_frame_flag = True
+        self.frame = None
+        self.has_first_frame = False
+        self.track_flag = False
+        self.block = False
+
         # set up predictor
         rospack = rospkg.RosPack()
         pkg_path = rospack.get_path("lasr_vision_sam2")
         ckpt_path = os.path.join(pkg_path, "checkpoints", "sam2.1_hiera_small.pt")
         model_cfg = "configs/sam2.1/sam2.1_hiera_s.yaml"
+
+        self._tf_buffer = tf.Buffer(cache_time=rospy.Duration(10))
+        self._tf_listener = tf.TransformListener(self._tf_buffer)
 
         self.bridge = CvBridge()
         self.predictor = build_sam2_camera_predictor(model_cfg, ckpt_path)
@@ -148,12 +158,6 @@ class SAM2Node:
 
         rospy.loginfo("SAM2Node ROS interfaces set up.")
         print("SAM2Node ROS interfaces set up.")
-
-        self.add_conditioning_frame_flag = True
-        self.frame = None
-        self.has_first_frame = False
-        self.track_flag = False
-        self.block = False
 
     def track_flag_callback(self, msg):
         if self.has_first_frame:
@@ -544,6 +548,9 @@ class SAM2Node:
                 rospy.logerr(
                     f"[Tracking] Failed to encode mask for object ID {obj_id}: {e}"
                 )
+                rospy.logerr(
+                    f"[Tracking] Failed to encode mask for object ID {obj_id}: {e}"
+                )
                 continue
 
             # Draw visualization overlapty
@@ -597,7 +604,6 @@ class SAM2Node:
                     point_stamped.header = depth_msg.header
                     point_stamped.point = pt
                     point_stamped_transformed = do_transform_point(point_stamped, transform)
-                    pt = point_stamped_transformed
 
                     cv2.putText(
                         mask_overlay,
@@ -614,7 +620,7 @@ class SAM2Node:
 
                     center_msg = CentrePointWithID()
                     center_msg.id = obj_id
-                    center_msg.centre_point = pt
+                    center_msg.centre_point = point_stamped_transformed.point
                     mask_centers_msg.centre_points.append(center_msg)
 
                     det = Detection3D()
@@ -622,7 +628,7 @@ class SAM2Node:
                     det.confidence = 1.0
                     det.xywh = xywh
                     det.xyseg = []
-                    det.point = pt
+                    det.point = point_stamped_transformed.point
                     detection_array_msg.detections.append(det)
 
                 else:
@@ -633,13 +639,15 @@ class SAM2Node:
                 #     pt.z = 0.0
 
                 marker = Marker()
-                marker.header.frame_id = depth_msg.header.frame_id
-                marker.header.stamp = depth_msg.header.stamp
+                marker.header.frame_id = (
+                    self.target_frame or depth_image.header.frame_id
+                )
+                marker.header.stamp = rospy.Time.now()
                 marker.ns = "sam2_tracking"
                 marker.id = obj_id
                 marker.type = Marker.SPHERE
                 marker.action = Marker.ADD
-                marker.pose.position = pt
+                marker.pose.position = point_stamped_transformed.point
                 marker.pose.orientation.x = 0.0
                 marker.pose.orientation.y = 0.0
                 marker.pose.orientation.z = 0.0
