@@ -631,36 +631,36 @@ class SAM2Node:
                     det.point = point_stamped_transformed.point
                     detection_array_msg.detections.append(det)
 
+                    marker = Marker()
+                    marker.header.frame_id = (
+                        self.target_frame or depth_image.header.frame_id
+                    )
+                    marker.header.stamp = rospy.Time.now()
+                    marker.ns = "sam2_tracking"
+                    marker.id = obj_id
+                    marker.type = Marker.SPHERE
+                    marker.action = Marker.ADD
+                    marker.pose.position = point_stamped_transformed.point
+                    marker.pose.orientation.x = 0.0
+                    marker.pose.orientation.y = 0.0
+                    marker.pose.orientation.z = 0.0
+                    marker.pose.orientation.w = 1.0
+                    marker.scale.x = 0.25
+                    marker.scale.y = 0.25
+                    marker.scale.z = 0.25
+                    marker.color.a = 1.0
+                    marker.color.r = 0.0
+                    marker.color.g = 1.0
+                    marker.color.b = 0.0
+                    marker.lifetime = rospy.Duration(0.5)
+                    self.centre_marker_pub.publish(marker)
+
                 else:
                     rospy.logwarn(f"No valid depth in mask for object ID {obj_id}.")
                 #     pt = Point()
                 #     pt.x = float(np.median(xs))
                 #     pt.y = float(np.median(ys))
                 #     pt.z = 0.0
-
-                marker = Marker()
-                marker.header.frame_id = (
-                    self.target_frame or depth_image.header.frame_id
-                )
-                marker.header.stamp = rospy.Time.now()
-                marker.ns = "sam2_tracking"
-                marker.id = obj_id
-                marker.type = Marker.SPHERE
-                marker.action = Marker.ADD
-                marker.pose.position = point_stamped_transformed.point
-                marker.pose.orientation.x = 0.0
-                marker.pose.orientation.y = 0.0
-                marker.pose.orientation.z = 0.0
-                marker.pose.orientation.w = 1.0
-                marker.scale.x = 0.25
-                marker.scale.y = 0.25
-                marker.scale.z = 0.25
-                marker.color.a = 1.0
-                marker.color.r = 0.0
-                marker.color.g = 1.0
-                marker.color.b = 0.0
-                marker.lifetime = rospy.Duration(0.5)
-                self.centre_marker_pub.publish(marker)
 
             else:
                 rospy.loginfo(f"No valid mask detected for object ID {obj_id}.")
