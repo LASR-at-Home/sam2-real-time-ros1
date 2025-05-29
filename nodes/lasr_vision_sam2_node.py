@@ -13,6 +13,7 @@ if torch.cuda.get_device_properties(0).major >= 8:
     torch.backends.cudnn.allow_tf32 = True
 
 from sam2.build_sam import build_sam2_camera_predictor
+from ultralytics import YOLO
 
 import rospy
 import rospkg
@@ -79,6 +80,27 @@ class SAM2Node:
 
         self.bridge = CvBridge()
         self.predictor = build_sam2_camera_predictor(model_cfg, ckpt_path)
+
+        # Load YOLO model for person detection
+        # Using small model (YOLOv8n) for efficiency
+        try:
+            rospack = rospkg.RosPack()
+            pkg_path = rospack.get_path("lasr_vision_sam2")
+            yolo_model_path = os.path.join(pkg_path, "models", "yolov8n.pt")
+
+            # Check if the model exists in the ROS package path
+            if os.path.exists(yolo_model_path):
+                self.yolo_model = YOLO(yolo_model_path)
+                rospy.loginfo(f"YOLOv8 model loaded from {yolo_model_path}")
+            else:
+                # Fallback to default path (will download if not present)
+                self.yolo_model = YOLO("yolov8n.pt")
+                rospy.loginfo("YOLOv8 model loaded from default location")
+
+            print("YOLOv8 model loaded successfully for person detection")
+        except Exception as e:
+            rospy.logerr(f"Failed to load YOLOv8 model: {e}")
+            self.yolo_model = None
 
         self.camera = rospy.get_param("camera", "xtion")
         self.use_3d = rospy.get_param("use_3d", True)
@@ -159,6 +181,59 @@ class SAM2Node:
         rospy.loginfo("SAM2Node ROS interfaces set up.")
         print("SAM2Node ROS interfaces set up.")
 
+    # Helper function to detect if a person is in the region of interest
+    def detect_person_in_roi(self, image, bbox):
+        """
+        Detect if a person exists in the region of interest
+
+        Args:
+            image: The full image
+            bbox: Bounding box in format [x_min, y_min, width, height]
+
+        Returns:
+            bool: True if a person is detected, False otherwise
+        """
+        if self.yolo_model is None:
+            return True  # Default to True if model failed to load
+
+        # Extract ROI from the image
+        x, y, w, h = bbox
+        x = max(0, int(x))
+        y = max(0, int(y))
+        w = int(w)
+        h = int(h)
+
+        # Ensure dimensions are valid
+        if w <= 0 or h <= 0 or x >= image.shape[1] or y >= image.shape[0]:
+            rospy.logwarn(f"Invalid ROI dimensions: {bbox}")
+            return False
+
+        # Adjust to avoid out of bounds
+        if x + w > image.shape[1]:
+            w = image.shape[1] - x
+        if y + h > image.shape[0]:
+            h = image.shape[0] - y
+
+        roi = image[y:y + h, x:x + w]
+
+        # Run YOLOv8 detection on the ROI
+        try:
+            results = self.yolo_model(roi, verbose=False)
+
+            # Check if person class (class 0 in COCO dataset) is detected
+            for result in results:
+                boxes = result.boxes
+                for box in boxes:
+                    cls = int(box.cls.item())
+                    if cls == 0:  # 0 is the class ID for person in COCO dataset
+                        return True
+
+            # No person detected
+            return False
+        except Exception as e:
+            rospy.logerr(f"Error in person detection: {e}")
+            return True  # Default to True on error to avoid false negatives
+
     def track_flag_callback(self, msg):
         if self.has_first_frame:
             self.track_flag = msg.data
@@ -234,7 +309,7 @@ class SAM2Node:
         # Process Point prompts
         for point_msg in msg.point_array:
             if len(point_msg.xy) % 2 != 0 or len(point_msg.xy) // 2 != len(
-                point_msg.labels
+                    point_msg.labels
             ):
                 rospy.logwarn(f"Invalid point/label count for ID={point_msg.obj_id}")
                 continue
@@ -394,7 +469,7 @@ class SAM2Node:
         # Create mask message array
         mask_array_msg = MaskWithIDArray()
         mask_centers_msg = CentrePointWithIDArray()
-        detection_array_msg = Detection3DArray()
+        detection_array_msg = DetectionArray()
         detection_array_msg.detections = []
 
         mask_overlay = self.frame.copy()
@@ -438,14 +513,23 @@ class SAM2Node:
                 x_max, y_max = xs.max(), ys.max()
                 xywh = [int(x_min), int(y_min), int(x_max - x_min), int(y_max - y_min)]
 
-                cx, cy = int(xs.median()), int(ys.median())
+                # Use YOLOv8 to detect if the object is a person
+                is_person = self.detect_person_in_roi(self.frame, xywh)
+                confidence = 1.0 if is_person else 0.0
+
+                if not is_person:
+                    rospy.loginfo(f" - Object ID {obj_id} is NOT a person, confidence set to 0.0")
+                else:
+                    rospy.loginfo(f" - Object ID {obj_id} is a person, confidence set to 1.0")
+
+                cx, cy = int(xs.mean()), int(ys.mean())
                 cv2.putText(
                     mask_overlay,
-                    f"ID {obj_id}",
+                    f"ID {obj_id}" + (" (person)" if is_person else " (not person)"),
                     (cx, cy),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.8,
-                    (0, 255, 0),
+                    (0, 255, 0) if is_person else (0, 0, 255),
                     2,
                 )
                 rospy.loginfo(f" - Middle point {(cx, cy)}")
@@ -462,7 +546,7 @@ class SAM2Node:
 
                 det = Detection()
                 det.name = str(obj_id)
-                det.confidence = 1.0
+                det.confidence = confidence
                 det.xywh = xywh
                 det.xyseg = []
                 detection_array_msg.detections.append(det)
@@ -499,6 +583,9 @@ class SAM2Node:
         if not self.track_flag:
             return
 
+        if self.block:
+            return
+
         try:
             if self.add_conditioning_frame_flag:
                 self.predictor.add_conditioning_frame(self.frame)
@@ -507,7 +594,7 @@ class SAM2Node:
             rospy.loginfo(f"Tracking {len(out_obj_ids)} objects in current frame.")
             rospy.loginfo(f"Tracking {out_obj_ids}.")
         except Exception as e:
-            rospy.logerr(f"Error during tracking: {e}, deactivated tracking.")
+            rospy.logerr(f"Error during tracking: {e}")
             self.track_flag = False
             return
 
@@ -566,6 +653,15 @@ class SAM2Node:
                 x_max, y_max = xs.max(), ys.max()
                 xywh = [int(x_min), int(y_min), int(x_max - x_min), int(y_max - y_min)]
 
+                # Use YOLOv8 to detect if the object is a person
+                is_person = self.detect_person_in_roi(self.frame, xywh)
+                confidence = 1.0 if is_person else 0.0
+
+                if not is_person:
+                    rospy.loginfo(f" - Object ID {obj_id} is NOT a person, confidence set to 0.0")
+                else:
+                    rospy.loginfo(f" - Object ID {obj_id} is a person, confidence set to 1.0")
+
                 # Filter out all valid depth points in the mask
                 depths = depth_image[ys, xs].astype(np.float32)
                 valid = depths > 0
@@ -594,12 +690,12 @@ class SAM2Node:
                             rospy.Duration(1.0),
                         )
                     except (
-                        tf.LookupException,
-                        tf.ConnectivityException,
-                        tf.ExtrapolationException,
+                            tf.LookupException,
+                            tf.ConnectivityException,
+                            tf.ExtrapolationException,
                     ) as e:
                         raise rospy.ServiceException(str(e))
-                    
+
                     point_stamped = PointStamped()
                     point_stamped.header = depth_msg.header
                     point_stamped.point = pt
@@ -607,11 +703,11 @@ class SAM2Node:
 
                     cv2.putText(
                         mask_overlay,
-                        f"ID {obj_id}",
+                        f"ID {obj_id}" + (" (person)" if is_person else " (not person)"),
                         (u_median, v_median),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.8,
-                        (0, 255, 0),
+                        (0, 255, 0) if is_person else (0, 0, 255),
                         2,
                     )
                     rospy.loginfo(
@@ -625,35 +721,37 @@ class SAM2Node:
 
                     det = Detection3D()
                     det.name = str(obj_id)
-                    det.confidence = 1.0
+                    det.confidence = confidence
                     det.xywh = xywh
                     det.xyseg = []
                     det.point = point_stamped_transformed.point
                     detection_array_msg.detections.append(det)
 
-                    marker = Marker()
-                    marker.header.frame_id = (
-                        self.target_frame or depth_image.header.frame_id
-                    )
-                    marker.header.stamp = rospy.Time.now()
-                    marker.ns = "sam2_tracking"
-                    marker.id = obj_id
-                    marker.type = Marker.SPHERE
-                    marker.action = Marker.ADD
-                    marker.pose.position = point_stamped_transformed.point
-                    marker.pose.orientation.x = 0.0
-                    marker.pose.orientation.y = 0.0
-                    marker.pose.orientation.z = 0.0
-                    marker.pose.orientation.w = 1.0
-                    marker.scale.x = 0.25
-                    marker.scale.y = 0.25
-                    marker.scale.z = 0.25
-                    marker.color.a = 1.0
-                    marker.color.r = 0.0
-                    marker.color.g = 1.0
-                    marker.color.b = 0.0
-                    marker.lifetime = rospy.Duration(0.5)
-                    self.centre_marker_pub.publish(marker)
+                    # Only show marker for persons
+                    if is_person:
+                        marker = Marker()
+                        marker.header.frame_id = (
+                                self.target_frame or depth_image.header.frame_id
+                        )
+                        marker.header.stamp = rospy.Time.now()
+                        marker.ns = "sam2_tracking"
+                        marker.id = obj_id
+                        marker.type = Marker.SPHERE
+                        marker.action = Marker.ADD
+                        marker.pose.position = point_stamped_transformed.point
+                        marker.pose.orientation.x = 0.0
+                        marker.pose.orientation.y = 0.0
+                        marker.pose.orientation.z = 0.0
+                        marker.pose.orientation.w = 1.0
+                        marker.scale.x = 0.25
+                        marker.scale.y = 0.25
+                        marker.scale.z = 0.25
+                        marker.color.a = 1.0
+                        marker.color.r = 0.0
+                        marker.color.g = 1.0
+                        marker.color.b = 0.0
+                        marker.lifetime = rospy.Duration(0.5)
+                        self.centre_marker_pub.publish(marker)
 
                 else:
                     rospy.logwarn(f"No valid depth in mask for object ID {obj_id}.")

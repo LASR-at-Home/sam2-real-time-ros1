@@ -83,12 +83,12 @@ add_message_files(
 # )
 
 ## Generate added messages and services with any dependencies listed here
-generate_messages(   
-  DEPENDENCIES  
-  std_msgs  
+generate_messages(
+  DEPENDENCIES
+  std_msgs
   sensor_msgs
   geometry_msgs
-)  
+)
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
@@ -169,6 +169,11 @@ include_directories(
 
 include(ExternalProject)
 
+# Directory to store models
+set(MODELS_DIR ${CMAKE_CURRENT_BINARY_DIR}/models)
+file(MAKE_DIRECTORY ${MODELS_DIR})
+
+# Download SAM2 checkpoint
 ExternalProject_Add(download_sam2_checkpoint
   PREFIX ${CMAKE_CURRENT_BINARY_DIR}/sam2_download
   SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/checkpoints
@@ -177,6 +182,41 @@ ExternalProject_Add(download_sam2_checkpoint
   BUILD_COMMAND ./download_ckpts.sh
   INSTALL_COMMAND ""
   LOG_DOWNLOAD ON
+)
+
+# Create script to download YOLOv8 model
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/download_yolo_model.sh
+"#!/bin/bash
+set -e
+# Create models directory if it doesn't exist
+mkdir -p ${MODELS_DIR}
+# Download YOLOv8n model using curl
+if [ ! -f ${MODELS_DIR}/yolov8n.pt ]; then
+    echo 'Downloading YOLOv8n model...'
+    curl -L -o ${MODELS_DIR}/yolov8n.pt https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt
+    echo 'YOLOv8n model downloaded successfully'
+else
+    echo 'YOLOv8n model already exists, skipping download'
+fi
+")
+
+# Make the script executable
+execute_process(COMMAND chmod +x ${CMAKE_CURRENT_BINARY_DIR}/download_yolo_model.sh)
+
+# Add download YOLOv8 model as an external project
+ExternalProject_Add(download_yolo_model
+  PREFIX ${CMAKE_CURRENT_BINARY_DIR}/yolo_download
+  SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}
+  CONFIGURE_COMMAND ""
+  BUILD_COMMAND ${CMAKE_CURRENT_BINARY_DIR}/download_yolo_model.sh
+  INSTALL_COMMAND ""
+  LOG_DOWNLOAD ON
+)
+
+# Create a symbolic link to the models directory in the lib directory
+add_custom_command(TARGET download_yolo_model POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION}
+  COMMAND ${CMAKE_COMMAND} -E create_symlink ${MODELS_DIR} ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION}/models
 )
 
 #############
@@ -192,6 +232,12 @@ catkin_install_python(PROGRAMS
   demo/demo.py
   nodes/lasr_vision_sam2_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+# Install YOLOv8 model
+install(DIRECTORY ${MODELS_DIR}/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/models
+  FILES_MATCHING PATTERN "*.pt"
 )
 
 # install(DIRECTORY checkpoints/
