@@ -4,6 +4,8 @@ import cv2
 from cv_bridge import CvBridge
 import message_filters
 
+import os.path
+import sys
 # use bfloat16 for the entire notebook
 torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()
 
@@ -83,21 +85,38 @@ class SAM2Node:
 
         # Load YOLO model for person detection
         # Using small model (YOLOv8n) for efficiency
+
+        # Load YOLO model for person detection
         try:
+            # Get the path to the build directory
             rospack = rospkg.RosPack()
             pkg_path = rospack.get_path("lasr_vision_sam2")
-            yolo_model_path = os.path.join(pkg_path, "models", "yolov8n.pt")
+            # For catkin workspaces, we need to use the devel/lib path
+            # Path structure: workspace/devel/lib/python3/dist-packages/package_name/models
 
-            # Check if the model exists in the ROS package path
-            if os.path.exists(yolo_model_path):
-                self.yolo_model = YOLO(yolo_model_path)
-                rospy.loginfo(f"YOLOv8 model loaded from {yolo_model_path}")
+            # Construct path to the model in build directory
+            # First try to find it in the Python module path
+            python_path = None
+            for path in sys.path:
+                if 'dist-packages/lasr_vision_sam2' in path or 'site-packages/lasr_vision_sam2' in path:
+                    python_path = path
+                    break
+
+            if python_path:
+                yolo_model_path = os.path.join(python_path, "models", "yolov8n.pt")
             else:
-                # Fallback to default path (will download if not present)
-                self.yolo_model = YOLO("yolov8n.pt")
-                rospy.loginfo("YOLOv8 model loaded from default location")
+                # Fallback to a hardcoded path structure
+                workspace_path = os.path.abspath(os.path.join(pkg_path, "../../../../../"))
+                yolo_model_path = os.path.join(workspace_path, "build", "lasr_vision_sam2", "models", "yolov8n.pt")
 
-            print("YOLOv8 model loaded successfully for person detection")
+            rospy.loginfo(f"Looking for YOLOv8 model at: {yolo_model_path}")
+
+            if not os.path.exists(yolo_model_path):
+                raise FileNotFoundError(f"YOLOv8 model not found at {yolo_model_path}")
+
+            self.yolo_model = YOLO(yolo_model_path)
+            rospy.loginfo(f"YOLOv8 model loaded successfully from {yolo_model_path}")
+            print(f"YOLOv8 model loaded successfully from {yolo_model_path}")
         except Exception as e:
             rospy.logerr(f"Failed to load YOLOv8 model: {e}")
             self.yolo_model = None
