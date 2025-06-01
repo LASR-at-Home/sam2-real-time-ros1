@@ -123,7 +123,7 @@ class SAM2Node:
 
         self.camera = rospy.get_param("camera", "xtion")
         self.use_3d = rospy.get_param("use_3d", True)
-        self.target_frame = rospy.get_param("target_frame", None)
+        self.target_frame = rospy.get_param("target_frame", "map")
 
         rospy.loginfo("SAM2 predictor initialized from checkpoint.")
         print("SAM2 predictor initialized from checkpoint.")
@@ -478,9 +478,9 @@ class SAM2Node:
         try:
             if self.add_conditioning_frame_flag:
                 self.predictor.add_conditioning_frame(self.frame)
-                rospy.loginfo("Conditioning frame added.")
+                # rospy.loginfo("Conditioning frame added.")
             out_obj_ids, out_mask_logits = self.predictor.track(self.frame)
-            rospy.loginfo(f"Tracking {len(out_obj_ids)} objects in current frame.")
+            # rospy.loginfo(f"Tracking {len(out_obj_ids)} objects in current frame.")
         except Exception as e:
             rospy.logerr(f"Error during tracking: {e}")
             return
@@ -499,10 +499,10 @@ class SAM2Node:
 
             try:
                 # Print debug shape/type info
-                rospy.loginfo(f"[Tracking] Processing object ID {obj_id}")
-                rospy.loginfo(
-                    f" - mask raw shape: {mask.shape}, dtype: {mask.dtype}, min: {mask.min():.4f}, max: {mask.max():.4f}"
-                )
+                # rospy.loginfo(f"[Tracking] Processing object ID {obj_id}")
+                # rospy.loginfo(
+                #     f" - mask raw shape: {mask.shape}, dtype: {mask.dtype}, min: {mask.min():.4f}, max: {mask.max():.4f}"
+                # )
 
                 # Ensure mono8 format
                 mask_np = mask[0]  # Assume (1, H, W)
@@ -512,7 +512,7 @@ class SAM2Node:
                 mask_msg.id = obj_id
                 mask_msg.mask = self.bridge.cv2_to_imgmsg(mask_uint8, encoding="mono8")
                 mask_array_msg.masks.append(mask_msg)
-                rospy.loginfo(f" - Successfully encoded mask for object ID {obj_id}")
+                # rospy.loginfo(f" - Successfully encoded mask for object ID {obj_id}")
             except Exception as e:
                 rospy.logerr(
                     f"[Tracking] Failed to encode mask for object ID {obj_id}: {e}"
@@ -536,10 +536,10 @@ class SAM2Node:
                 is_person = self.detect_person_in_roi(self.frame, xywh)
                 confidence = 1.0 if is_person else 0.0
 
-                if not is_person:
-                    rospy.loginfo(f" - Object ID {obj_id} is NOT a person, confidence set to 0.0")
-                else:
-                    rospy.loginfo(f" - Object ID {obj_id} is a person, confidence set to 1.0")
+                # if not is_person:
+                #     rospy.loginfo(f" - Object ID {obj_id} is NOT a person, confidence set to 0.0")
+                # else:
+                #     rospy.loginfo(f" - Object ID {obj_id} is a person, confidence set to 1.0")
 
                 cx, cy = int(xs.mean()), int(ys.mean())
                 cv2.putText(
@@ -551,7 +551,7 @@ class SAM2Node:
                     (0, 255, 0) if is_person else (0, 0, 255),
                     2,
                 )
-                rospy.loginfo(f" - Middle point {(cx, cy)}")
+                # rospy.loginfo(f" - Middle point {(cx, cy)}")
 
                 pt = Point()
                 pt.x = float(cx)
@@ -576,9 +576,9 @@ class SAM2Node:
             self.mask_pub.publish(mask_array_msg)
             self.mask_overlay_pub.publish(overlay_msg)
             self.centre_pub.publish(mask_centers_msg)
-            rospy.loginfo("Published mask and overlay.")
+            # rospy.loginfo("Published mask and overlay.")
             self.detection_pub.publish(detection_array_msg)
-            rospy.loginfo("Published DetectionArray.")
+            # rospy.loginfo("Published DetectionArray.")
         except Exception as e:
             rospy.logerr(f"Failed to publish output: {e}")
 
@@ -608,10 +608,10 @@ class SAM2Node:
         try:
             if self.add_conditioning_frame_flag:
                 self.predictor.add_conditioning_frame(self.frame)
-                rospy.loginfo("Conditioning frame added.")
+                # rospy.loginfo("Conditioning frame added.")
             out_obj_ids, out_mask_logits = self.predictor.track(self.frame)
-            rospy.loginfo(f"Tracking {len(out_obj_ids)} objects in current frame.")
-            rospy.loginfo(f"Tracking {out_obj_ids}.")
+            # rospy.loginfo(f"Tracking {len(out_obj_ids)} objects in current frame.")
+            # rospy.loginfo(f"Tracking {out_obj_ids}.")
         except Exception as e:
             rospy.logerr(f"Error during tracking: {e}")
             self.track_flag = False
@@ -625,7 +625,7 @@ class SAM2Node:
 
         mask_overlay = self.frame.copy()
         masks_np = out_mask_logits.cpu().numpy()
-        rospy.loginfo(f"Tracking masks {len(masks_np)}.")
+        # rospy.loginfo(f"Tracking masks {len(masks_np)}.")
 
         fx = cam_info_msg.K[0]
         fy = cam_info_msg.K[4]
@@ -636,10 +636,10 @@ class SAM2Node:
 
             try:
                 # Print debug shape/type info
-                rospy.loginfo(f"[Tracking] Processing object ID {obj_id}")
-                rospy.loginfo(
-                    f" - mask raw shape: {mask.shape}, dtype: {mask.dtype}, min: {mask.min():.4f}, max: {mask.max():.4f}"
-                )
+                # rospy.loginfo(f"[Tracking] Processing object ID {obj_id}")
+                # rospy.loginfo(
+                #     f" - mask raw shape: {mask.shape}, dtype: {mask.dtype}, min: {mask.min():.4f}, max: {mask.max():.4f}"
+                # )
 
                 # Ensure mono8 format
                 mask_np = mask[0]  # Assume (1, H, W)
@@ -649,14 +649,14 @@ class SAM2Node:
                 mask_msg.id = obj_id
                 mask_msg.mask = self.bridge.cv2_to_imgmsg(mask_uint8, encoding="mono8")
                 mask_array_msg.masks.append(mask_msg)
-                rospy.loginfo(f" - Successfully encoded mask for object ID {obj_id}")
+                # rospy.loginfo(f" - Successfully encoded mask for object ID {obj_id}")
             except Exception as e:
-                rospy.logerr(
-                    f"[Tracking] Failed to encode mask for object ID {obj_id}: {e}"
-                )
-                rospy.logerr(
-                    f"[Tracking] Failed to encode mask for object ID {obj_id}: {e}"
-                )
+                # rospy.logerr(
+                #     f"[Tracking] Failed to encode mask for object ID {obj_id}: {e}"
+                # )
+                # rospy.logerr(
+                #     f"[Tracking] Failed to encode mask for object ID {obj_id}: {e}"
+                # )
                 continue
 
             # Draw visualization overlapty
@@ -676,10 +676,10 @@ class SAM2Node:
                 is_person = self.detect_person_in_roi(self.frame, xywh)
                 confidence = 1.0 if is_person else 0.0
 
-                if not is_person:
-                    rospy.loginfo(f" - Object ID {obj_id} is NOT a person, confidence set to 0.0")
-                else:
-                    rospy.loginfo(f" - Object ID {obj_id} is a person, confidence set to 1.0")
+                # if not is_person:
+                #     rospy.loginfo(f" - Object ID {obj_id} is NOT a person, confidence set to 0.0")
+                # else:
+                #     rospy.loginfo(f" - Object ID {obj_id} is a person, confidence set to 1.0")
 
                 # Filter out all valid depth points in the mask
                 depths = depth_image[ys, xs].astype(np.float32)
@@ -729,9 +729,9 @@ class SAM2Node:
                         (0, 255, 0) if is_person else (0, 0, 255),
                         2,
                     )
-                    rospy.loginfo(
-                        f" - 3D median center: ({pt.x:.2f}, {pt.y:.2f}, {pt.z:.2f})"
-                    )
+                    # rospy.loginfo(
+                    #     f" - 3D median center: ({pt.x:.2f}, {pt.y:.2f}, {pt.z:.2f})"
+                    # )
 
                     center_msg = CentrePointWithID()
                     center_msg.id = obj_id
@@ -788,9 +788,9 @@ class SAM2Node:
             self.mask_pub.publish(mask_array_msg)
             self.mask_overlay_pub.publish(overlay_msg)
             self.centre_pub.publish(mask_centers_msg)
-            rospy.loginfo("Published mask, overlay, and 3D centers.")
+            # rospy.loginfo("Published mask, overlay, and 3D centers.")
             self.detection3d_pub.publish(detection_array_msg)
-            rospy.loginfo("Published Detection3DArray.")
+            # rospy.loginfo("Published Detection3DArray.")
         except Exception as e:
             rospy.logerr(f"Failed to publish outputs: {e}")
 
