@@ -6,6 +6,7 @@ import message_filters
 
 import os.path
 import sys
+
 # use bfloat16 for the entire notebook
 torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()
 
@@ -98,7 +99,10 @@ class SAM2Node:
             # First try to find it in the Python module path
             python_path = None
             for path in sys.path:
-                if 'dist-packages/lasr_vision_sam2' in path or 'site-packages/lasr_vision_sam2' in path:
+                if (
+                    "dist-packages/lasr_vision_sam2" in path
+                    or "site-packages/lasr_vision_sam2" in path
+                ):
                     python_path = path
                     break
 
@@ -106,8 +110,12 @@ class SAM2Node:
                 yolo_model_path = os.path.join(python_path, "models", "yolov8n.pt")
             else:
                 # Fallback to a hardcoded path structure
-                workspace_path = os.path.abspath(os.path.join(pkg_path, "../../../../../"))
-                yolo_model_path = os.path.join(workspace_path, "build", "lasr_vision_sam2", "models", "yolov8n.pt")
+                workspace_path = os.path.abspath(
+                    os.path.join(pkg_path, "../../../../../")
+                )
+                yolo_model_path = os.path.join(
+                    workspace_path, "build", "lasr_vision_sam2", "models", "yolov8n.pt"
+                )
 
             rospy.loginfo(f"Looking for YOLOv8 model at: {yolo_model_path}")
 
@@ -233,7 +241,7 @@ class SAM2Node:
         if y + h > image.shape[0]:
             h = image.shape[0] - y
 
-        roi = image[y:y + h, x:x + w]
+        roi = image[y : y + h, x : x + w]
 
         # Run YOLOv8 detection on the ROI
         try:
@@ -328,7 +336,7 @@ class SAM2Node:
         # Process Point prompts
         for point_msg in msg.point_array:
             if len(point_msg.xy) % 2 != 0 or len(point_msg.xy) // 2 != len(
-                    point_msg.labels
+                point_msg.labels
             ):
                 rospy.logwarn(f"Invalid point/label count for ID={point_msg.obj_id}")
                 continue
@@ -709,20 +717,23 @@ class SAM2Node:
                             rospy.Duration(1.0),
                         )
                     except (
-                            tf.LookupException,
-                            tf.ConnectivityException,
-                            tf.ExtrapolationException,
+                        tf.LookupException,
+                        tf.ConnectivityException,
+                        tf.ExtrapolationException,
                     ) as e:
                         raise rospy.ServiceException(str(e))
 
                     point_stamped = PointStamped()
                     point_stamped.header = depth_msg.header
                     point_stamped.point = pt
-                    point_stamped_transformed = do_transform_point(point_stamped, transform)
+                    point_stamped_transformed = do_transform_point(
+                        point_stamped, transform
+                    )
 
                     cv2.putText(
                         mask_overlay,
-                        f"ID {obj_id}" + (" (person)" if is_person else " (not person)"),
+                        f"ID {obj_id}"
+                        + (" (person)" if is_person else " (not person)"),
                         (u_median, v_median),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.8,
@@ -750,7 +761,7 @@ class SAM2Node:
                     if is_person:
                         marker = Marker()
                         marker.header.frame_id = (
-                                self.target_frame or depth_image.header.frame_id
+                            self.target_frame or depth_image.header.frame_id
                         )
                         marker.header.stamp = rospy.Time.now()
                         marker.ns = "sam2_tracking"
